@@ -2,6 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+# ChangeLog
+# Revision d96fbee9aa35b92afe59179bb02d93566a965d10 building移除v8_enable_inspector
+
 import("//build/config/android/config.gni")
 import("//build/config/arm.gni")
 import("//build/config/dcheck_always_on.gni")
