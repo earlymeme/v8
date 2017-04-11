@@ -1,3 +1,12 @@
+## 如何使用gdb调试v8
+1. gdbinit
+2. gdb-v8-support.py
+
+## 如何使用lldb调试v8
+1. lldbinit
+2. lldb_commands.py
+
+
 V8 JavaScript Engine
 =============
 
