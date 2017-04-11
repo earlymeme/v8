@@ -1011,7 +1011,7 @@ void BytecodeGenerator::VisitModuleNamespaceImports() {
                             HoleCheckMode::kElided);
   }
 }
-
+// 声明
 void BytecodeGenerator::VisitDeclarations(Declaration::List* declarations) {
   RegisterAllocationScope register_scope(this);
   DCHECK(globals_builder()->empty());
@@ -1026,6 +1026,7 @@ void BytecodeGenerator::VisitDeclarations(Declaration::List* declarations) {
   int encoded_flags = info()->GetDeclareGlobalsFlags();
 
   // Emit code to declare globals.
+  // 全局声明
   RegisterList args = register_allocator()->NewRegisterList(3);
   builder()
       ->LoadConstantPoolEntry(globals_builder()->constant_pool_entry())

@@ -21,7 +21,8 @@ namespace interpreter {
 
 class GlobalDeclarationsBuilder;
 class LoopBuilder;
-
+// 字节码生成器
+// --print-bytecode
 class BytecodeGenerator final : public AstVisitor<BytecodeGenerator> {
  public:
   explicit BytecodeGenerator(CompilationInfo* info);
