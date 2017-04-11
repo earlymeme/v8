@@ -1,0 +1,53 @@
+# lldb debugging v8-related functionality in Node.js
+# =========================================================
+
+# lldb re-write of user-defined V8 debugging functions
+# https://github.com/v8/v8/blob/master/tools/gdbinit
+
+#allow the file to be read when lldb starts (set to false to ignore it)
+settings set target.load-cwd-lldbinit true
+settings set target.inline-breakpoint-strategy always
+
+settings set frame-format "frame #${frame.index}: ${frame.pc}{ ${module.file.basename}{`\x1b\x5b32m${function.name-with-args}\x1b\x5b39m${function.pc-offset}}}{ at \x1b\x5b33m${line.file.basename}:${line.number}\x1b\x5b39m}\n"
+
+# Print HeapObjects.
+command regex job1 's/(.+)/call _v8_internal_Print_Object((void*)(%1))/'
+
+# Print v8::Local handle value.
+command regex jlh1 's/(^\*.+)/call _v8_internal_Print_Object(*(v8::internal::Object**)(%1))/'
+
+
+# Print Code objects containing given PC from an internal code address
+command regex jco1 's/(.+)/call _v8_internal_Print_Code((void*)(%1))/'
+
+# Print TypeFeedbackVector
+command regex jfv1 's/(.+)/call _v8_internal_Print_TypeFeedbackVector((void*)(%1))/'
+
+# Print DescriptorArray.
+command regex jda1 's/(.+)/call _v8_internal_Print_DescriptorArray((void*)(%1))/'
+
+# Print HeapObjects.
+command regex -h 'Print a v8 JavaScript object' job 's/(.+)/expr -- '_v8_internal_Print_Object((void*)(%1))/'
+
+# Print v8::Local handle value.
+command regex -h 'Print content of a v8::Local handle' jlh 's/(.+)/expr -- '_v8_internal_Print_Object(*(v8::internal::Object**)(*%1))/'
+
+# Print Code objects containing given PC.
+command regex -h 'Print a v8 Code object from an internal code address' jco 's/(.+)/expr -- '_v8_internal_Print_Code((void*)(*%1))/'
+
+# Print FeedbackVector
+command regex -h 'Print a v8 FeedbackVector object' jfv 's/(.+)/expr -- '_v8_internal_Print_FeedbackVector((void*)(%1))/'
+
+# Print TypeFeedbackMetadata
+command regex -h 'Print a v8 TypeFeedbackMetadata object' jfm 's/(.+)/expr -- '_v8_internal_Print_TypeFeedbackMetadata((void*)(%1))/'
+
+# Print DescriptorArray.
+command regex -h 'Print a v8 DescriptorArray object' jda 's/(.+)/expr -- '_v8_internal_Print_DescriptorArray((void*)(%1))/'
+
+# Print LayoutDescriptor.
+command regex -h 'Print a v8 LayoutDescriptor object' jld 's/(.+)/expr -- '_v8_internal_Print_LayoutDescriptor((void*)(%1))/'
+
+# Print TransitionArray.
+command regex -h 'Print a v8 TransitionArray object' jta 's/(.+)/expr -- '_v8_internal_Print_TransitionArray((void*)(%1))/'
+
+command script import ~/lldb_commands.py

@@ -131,6 +131,7 @@ MaybeHandle<JSReceiver> Object::ConvertReceiver(Isolate* isolate,
 }
 
 // static
+// 静态
 MaybeHandle<Object> Object::ToNumber(Handle<Object> input) {
   while (true) {
     if (input->IsNumber()) {

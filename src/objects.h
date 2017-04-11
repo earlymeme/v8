@@ -444,6 +444,7 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
 
 // Since string types are not consecutive, this macro is used to
 // iterate over them.
+// 提供支持遍历string
 #define STRING_TYPE_LIST(V)                                                   \
   V(STRING_TYPE, kVariableSizeSentinel, string, String)                       \
   V(ONE_BYTE_STRING_TYPE, kVariableSizeSentinel, one_byte_string,             \
@@ -5631,21 +5632,40 @@ class PrototypeInfo;
 //  A Map contains information about:
 //  - Size information about the object
 //  - How to iterate over an object (for garbage collection)
+/*
+ * 对象都有一个Map,用来描述对象的结构
+ * 包括:
+ *  - 对象的Size
+ *  - GC时如何遍历对象
+ * */
 class Map: public HeapObject {
  public:
   // Instance size.
   // Size in bytes or kVariableSizeSentinel if instances do not have
   // a fixed size.
+  /*
+   * 实例的大小
+   * 字节数 or kVariableSizeSentinel = 0 (没有固定的大小的话)
+   * */
   inline int instance_size();
   inline void set_instance_size(int value);
 
   // Only to clear an unused byte, remove once byte is used.
+  /*
+   * 清除没有用到的字节
+   * */
   inline void clear_unused();
 
   // [inobject_properties_or_constructor_function_index]: Provides access
   // to the inobject properties in case of JSObject maps, or the constructor
   // function index in case of primitive maps.
+  /*
+   * 访问JSObject maps内的属性,原始maps的构造函数索引
+   * */
   inline int inobject_properties_or_constructor_function_index();
+  /*
+   * set索引
+   * */
   inline void set_inobject_properties_or_constructor_function_index(int value);
   // Count of properties allocated in the object (JSObject only).
   inline int GetInObjectProperties();
@@ -5743,11 +5763,33 @@ class Map: public HeapObject {
   //
   //  Important: inobject slack tracking is not attempted during the snapshot
   //  creation.
+  /*
+   * 稀疏追踪是一种inobject空间回收的一种方式
+   * 实例的大小是通过加入一些slack到 expected_nof_properties 来决定的(在构造函数后允许一些额外的属性).可能会浪费一些额外的空间
+   *
+   * 回收算法:
+   * - 检测第一个JSFunction构造函数调用.当它发生时进入“进行中”状态：在initial_map中初始化构造计数器。
+   * - 跟踪正在初始化一个新的one_pointer_filler_map的对象未使用过的属性,不是undefined_value的(用过的部分是undefined_value初始化的)
+   * - 一旦创建了足够的对象,计算 slack(遍历map transition树,从initial_map开始,直到最小的unused_property_fields
+   * - 再次遍历transition树,降低每个map的实例的大小,已经有了的对象的大小会重新调整.所有进一步的分配会使用调整后的实例大小.
+   * - 使用不同的闭包创建不同类型的对象分配内存后,SharedFunctionInfo的expected_nof_properties会设置为"未修改的"
+   *
+   * 创建快照期间不会发生inobject slack tracking
+   * */
 
+  /*
+   * 分配多点
+   * */
   static const int kGenerousAllocationCount =
       kSlackTrackingCounterStart - kSlackTrackingCounterEnd + 1;
 
   // Starts the tracking by initializing object constructions countdown counter.
+  /*
+   *  初始化对象构造的countdown计数器,启动tracking
+   *  - 检测"正在进行中"(调用IsInobjectSlackTrackingInProgress)
+   *  - unused_property_fields=0时,直接返回
+   *  - 设置counter
+   * */
   void StartInobjectSlackTracking();
 
   // True if the object constructions countdown counter is a range
@@ -5755,10 +5797,15 @@ class Map: public HeapObject {
   inline bool IsInobjectSlackTrackingInProgress();
 
   // Does the tracking step.
+  // 执行跟踪
+  // 会调用CompleteInobjectSlackTracking
   inline void InobjectSlackTrackingStep();
 
   // Completes inobject slack tracking for the transition tree starting at this
   // initial map.
+  /*
+   * 从初始的map开始,跟踪transition树
+   * */
   void CompleteInobjectSlackTracking();
 
   // Tells whether the object in the prototype property will be used
@@ -5766,6 +5813,9 @@ class Map: public HeapObject {
   // property is set to a value that is not a JSObject, the prototype
   // property will not be used to create instances of the function.
   // See ECMA-262, 13.2.2.
+  /*
+   * 是否需要实例原型
+   * */
   inline void set_non_instance_prototype(bool value);
   inline bool has_non_instance_prototype();
 
@@ -5775,14 +5825,17 @@ class Map: public HeapObject {
   inline bool is_constructor() const;
 
   // Tells whether the instance with this map has a hidden prototype.
+  // 有隐藏的原型
   inline void set_has_hidden_prototype(bool value);
   inline bool has_hidden_prototype() const;
 
   // Records and queries whether the instance has a named interceptor.
+  // 记录,查询时候实例有命名的拦截器
   inline void set_has_named_interceptor();
   inline bool has_named_interceptor();
 
   // Records and queries whether the instance has an indexed interceptor.
+  // 记录,查询时候实例有(数字的)索引的拦截器
   inline void set_has_indexed_interceptor();
   inline bool has_indexed_interceptor();
 
@@ -5792,11 +5845,16 @@ class Map: public HeapObject {
   // a normal JS object.  It is useful for implementing undetectable
   // document.all in Firefox & Safari.
   // See https://bugzilla.mozilla.org/show_bug.cgi?id=248549.
+  /*
+   * 对象是否不可检测
+   * 不可检测的对象包括 typeof 返回undefinded,或者ToBoolean返回false的对象
+   * */
   inline void set_is_undetectable();
   inline bool is_undetectable();
 
   // Tells whether the instance has a [[Call]] internal method.
   // This property is implemented according to ES6, section 7.2.3.
+  // [[Call]]内部方法,是否可调用
   inline void set_is_callable();
   inline bool is_callable() const;
 
@@ -5811,9 +5869,11 @@ class Map: public HeapObject {
   inline ElementsKind elements_kind();
 
   // Tells whether the instance has fast elements that are only Smis.
+  // 只有Smi类型的快速元素
   inline bool has_fast_smi_elements();
 
   // Tells whether the instance has fast elements.
+  // 快速元素
   inline bool has_fast_object_elements();
   inline bool has_fast_smi_or_object_elements();
   inline bool has_fast_double_elements();
@@ -5910,9 +5970,11 @@ class Map: public HeapObject {
   inline bool is_access_check_needed();
 
   // Returns true if map has a non-empty stub code cache.
+  // 非空的桩代码缓存,返回true
   inline bool has_code_cache();
 
   // [prototype]: implicit prototype object.
+  // 设置访问器
   DECL_ACCESSORS(prototype, Object)
   // TODO(jkummerow): make set_prototype private.
   static void SetPrototype(
@@ -6088,11 +6150,14 @@ class Map: public HeapObject {
   DECLARE_CAST(Map)
 
   // Code cache operations.
+  // 定义了一些代码缓存操作
 
   // Clears the code cache.
+  // 清除缓存
   inline void ClearCodeCache(Heap* heap);
 
   // Update code cache.
+  // 更新
   static void UpdateCodeCache(Handle<Map> map,
                               Handle<Name> name,
                               Handle<Code> code);
@@ -6109,6 +6174,7 @@ class Map: public HeapObject {
   Code* LookupInCodeCache(Name* name, Code::Flags code);
 
   // Computes a hash value for this map, to be used in HashTables and such.
+  // 计算map的hash
   int Hash();
 
   // Returns the transitioned map for this map with the most generic

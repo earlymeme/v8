@@ -1005,7 +1005,7 @@ FOR_EACH_INTRINSIC_RETURN_OBJECT(F)
 
 //---------------------------------------------------------------------------
 // Runtime provides access to all C++ runtime functions.
-
+// 提供访问C++运行时函数
 class Runtime : public AllStatic {
  public:
   enum FunctionId {
