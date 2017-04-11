@@ -36,6 +36,7 @@
 #undef MAP_TYPE
 
 #include "src/base/macros.h"
+#include "src/base/platform/platform-posix.h"
 #include "src/base/platform/platform.h"
 
 
@@ -98,24 +99,7 @@ std::vector<OS::SharedLibraryAddress> OS::GetSharedLibraryAddresses() {
 void OS::SignalCodeMovingGC() {
 }
 
-
-const char* OS::LocalTimezone(double time, TimezoneCache* cache) {
-  if (std::isnan(time)) return "";
-  time_t tv = static_cast<time_t>(std::floor(time/msPerSecond));
-  struct tm* t = localtime(&tv);  // NOLINT(runtime/threadsafe_fn)
-  if (NULL == t) return "";
-  return t->tm_zone;
-}
-
-
-double OS::LocalTimeOffset(TimezoneCache* cache) {
-  time_t tv = time(NULL);
-  struct tm* t = localtime(&tv);  // NOLINT(runtime/threadsafe_fn)
-  // tm_gmtoff includes any daylight savings offset, so subtract it.
-  return static_cast<double>(t->tm_gmtoff * msPerSecond -
-                             (t->tm_isdst > 0 ? 3600 * msPerSecond : 0));
-}
-
+TimezoneCache* OS::CreateTimezoneCache() { return new PosixTimezoneCache(); }
 
 VirtualMemory::VirtualMemory() : address_(NULL), size_(0) { }
 
@@ -248,10 +232,7 @@ bool VirtualMemory::ReleaseRegion(void* address, size_t size) {
   return munmap(address, size) == 0;
 }
 
-
-bool VirtualMemory::HasLazyCommits() {
-  return false;
-}
+bool VirtualMemory::HasLazyCommits() { return true; }
 
 }  // namespace base
 }  // namespace v8

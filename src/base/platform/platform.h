@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "src/base/base-export.h"
 #include "src/base/build_config.h"
 #include "src/base/compiler-specific.h"
 #include "src/base/platform/mutex.h"
@@ -55,6 +56,7 @@ inline intptr_t InternalGetExistingThreadLocal(intptr_t index) {
   const intptr_t kMaxSlots = kMaxInlineSlots + 1024;
   const intptr_t kPointerSize = sizeof(void*);
   DCHECK(0 <= index && index < kMaxSlots);
+  USE(kMaxSlots);
   if (index < kMaxInlineSlots) {
     return static_cast<intptr_t>(__readfsdword(kTibInlineTlsOffset +
                                                kPointerSize * index));
@@ -69,7 +71,7 @@ inline intptr_t InternalGetExistingThreadLocal(intptr_t index) {
 
 #define V8_FAST_TLS_SUPPORTED 1
 
-extern intptr_t kMacTlsBaseOffset;
+extern V8_BASE_EXPORT intptr_t kMacTlsBaseOffset;
 
 INLINE(intptr_t InternalGetExistingThreadLocal(intptr_t index));
 
@@ -102,7 +104,7 @@ class TimezoneCache;
 // functions. Add methods here to cope with differences between the
 // supported platforms.
 
-class OS {
+class V8_BASE_EXPORT OS {
  public:
   // Initialize the OS class.
   // - random_seed: Used for the GetRandomMmapAddress() if non-zero.
@@ -123,19 +125,6 @@ class OS {
   static double TimeCurrentMillis();
 
   static TimezoneCache* CreateTimezoneCache();
-  static void DisposeTimezoneCache(TimezoneCache* cache);
-  static void ClearTimezoneCache(TimezoneCache* cache);
-
-  // Returns a string identifying the current time zone. The
-  // timestamp is used for determining if DST is in effect.
-  static const char* LocalTimezone(double time, TimezoneCache* cache);
-
-  // Returns the local time offset in milliseconds east of UTC without
-  // taking daylight savings time into account.
-  static double LocalTimeOffset(TimezoneCache* cache);
-
-  // Returns the daylight savings offset for the given time.
-  static double DaylightSavingsOffset(double time, TimezoneCache* cache);
 
   // Returns last OS error.
   static int GetLastError();
@@ -177,6 +166,11 @@ class OS {
                         bool is_executable);
   static void Free(void* address, const size_t size);
 
+  // Allocates a region of memory that is inaccessible. On Windows this reserves
+  // but does not commit the memory. On Linux, it is equivalent to a call to
+  // Allocate() followed by Guard().
+  static void* AllocateGuarded(const size_t requested);
+
   // This is the granularity at which the ProtectCode(...) call can set page
   // permissions.
   static intptr_t CommitPageSize();
@@ -186,6 +180,9 @@ class OS {
 
   // Assign memory as a guard page so that access will cause an exception.
   static void Guard(void* address, const size_t size);
+
+  // Make a region of memory readable and writable.
+  static void Unprotect(void* address, const size_t size);
 
   // Generate a random address to be used for hinting mmap().
   static void* GetRandomMmapAddr();
@@ -211,7 +208,7 @@ class OS {
     char text[kStackWalkMaxTextLen];
   };
 
-  class MemoryMappedFile {
+  class V8_BASE_EXPORT MemoryMappedFile {
    public:
     virtual ~MemoryMappedFile() {}
     virtual void* memory() const = 0;
@@ -286,7 +283,7 @@ class OS {
 // Control of the reserved memory can be assigned to another VirtualMemory
 // object by assignment or copy-contructing. This removes the reserved memory
 // from the original object.
-class VirtualMemory {
+class V8_BASE_EXPORT VirtualMemory {
  public:
   // Empty VirtualMemory object, controlling no reserved memory.
   VirtualMemory();
@@ -418,7 +415,7 @@ class VirtualMemory {
 // thread. The Thread object should not be deallocated before the thread has
 // terminated.
 
-class Thread {
+class V8_BASE_EXPORT Thread {
  public:
   // Opaque data type for thread-local storage keys.
   typedef int32_t LocalStorageKey;

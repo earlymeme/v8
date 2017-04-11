@@ -30,13 +30,15 @@ class Deserializer : public SerializerDeserializer {
  public:
   // Create a deserializer from a snapshot byte source.
   template <class Data>
-  explicit Deserializer(Data* data)
+  explicit Deserializer(Data* data, bool deserializing_user_code = false)
       : isolate_(NULL),
         source_(data->Payload()),
         magic_number_(data->GetMagicNumber()),
+        num_extra_references_(data->GetExtraReferences()),
+        next_map_index_(0),
         external_reference_table_(NULL),
         deserialized_large_objects_(0),
-        deserializing_user_code_(false),
+        deserializing_user_code_(deserializing_user_code),
         next_alignment_(kWordAligned) {
     DecodeReservation(data->Reservations());
   }
@@ -47,11 +49,12 @@ class Deserializer : public SerializerDeserializer {
   void Deserialize(Isolate* isolate);
 
   // Deserialize a single object and the objects reachable from it.
-  MaybeHandle<Object> DeserializePartial(Isolate* isolate,
-                                         Handle<JSGlobalProxy> global_proxy);
+  MaybeHandle<Object> DeserializePartial(
+      Isolate* isolate, Handle<JSGlobalProxy> global_proxy,
+      v8::DeserializeEmbedderFieldsCallback embedder_fields_deserializer);
 
-  // Deserialize a shared function info. Fail gracefully.
-  MaybeHandle<SharedFunctionInfo> DeserializeCode(Isolate* isolate);
+  // Deserialize an object graph. Fail gracefully.
+  MaybeHandle<HeapObject> DeserializeObject(Isolate* isolate);
 
   // Add an object to back an attached reference. The order to add objects must
   // mirror the order they are added in the serializer.
@@ -82,16 +85,20 @@ class Deserializer : public SerializerDeserializer {
     DCHECK_EQ(kWordAligned, next_alignment_);
     int alignment = data - (kAlignmentPrefix - 1);
     DCHECK_LE(kWordAligned, alignment);
-    DCHECK_LE(alignment, kSimd128Unaligned);
+    DCHECK_LE(alignment, kDoubleUnaligned);
     next_alignment_ = static_cast<AllocationAlignment>(alignment);
   }
 
   void DeserializeDeferredObjects();
+  void DeserializeEmbedderFields(
+      v8::DeserializeEmbedderFieldsCallback embedder_fields_deserializer);
 
   void FlushICacheForNewIsolate();
-  void FlushICacheForNewCodeObjects();
+  void FlushICacheForNewCodeObjectsAndRecordEmbeddedObjects();
 
   void CommitPostProcessedObjects(Isolate* isolate);
+
+  void PrintDisassembledCodeObjects();
 
   // Fills in some heap data in an area from start to end (non-inclusive).  The
   // space id is used for the write barrier.  The object_address is the address
@@ -110,9 +117,6 @@ class Deserializer : public SerializerDeserializer {
   // snapshot by chunk index and offset.
   HeapObject* GetBackReferencedObject(int space);
 
-  Object** CopyInNativesSource(Vector<const char> source_vector,
-                               Object** current);
-
   // Cached current isolate.
   Isolate* isolate_;
 
@@ -121,6 +125,7 @@ class Deserializer : public SerializerDeserializer {
 
   SnapshotByteSource source_;
   uint32_t magic_number_;
+  uint32_t num_extra_references_;
 
   // The address of the next object that will be allocated in each space.
   // Each space has a number of chunks reserved by the GC, with each chunk
@@ -129,11 +134,14 @@ class Deserializer : public SerializerDeserializer {
   Heap::Reservation reservations_[kNumberOfSpaces];
   uint32_t current_chunk_[kNumberOfPreallocatedSpaces];
   Address high_water_[kNumberOfPreallocatedSpaces];
+  int next_map_index_;
+  List<Address> allocated_maps_;
 
   ExternalReferenceTable* external_reference_table_;
 
   List<HeapObject*> deserialized_large_objects_;
   List<Code*> new_code_objects_;
+  List<AccessorInfo*> accessor_infos_;
   List<Handle<String> > new_internalized_strings_;
   List<Handle<Script> > new_scripts_;
 

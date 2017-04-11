@@ -17,9 +17,7 @@
 
 namespace v8 {
 
-namespace base {
-class Semaphore;
-}
+struct TickSample;
 
 namespace sampler {
 class Sampler;
@@ -60,16 +58,24 @@ namespace internal {
 // --prof
 // Collect statistical profiling information (ticks), default is off.  The
 // tick profiler requires code events, so --prof implies --log-code.
+//
+// --prof-sampling-interval <microseconds>
+// The interval between --prof samples, default is 1000 microseconds (5000 on
+// Android).
 
 // Forward declarations.
 class CodeEventListener;
 class CpuProfiler;
 class Isolate;
+class JitLogger;
 class Log;
+class LowLevelLogger;
+class PerfBasicLogger;
+class PerfJitLogger;
 class Profiler;
-class Ticker;
+class ProfilerListener;
 class RuntimeCallTimer;
-struct TickSample;
+class Ticker;
 
 #undef LOG
 #define LOG(isolate, Call)                              \
@@ -83,12 +89,6 @@ struct TickSample;
     v8::internal::Logger* logger = (isolate)->logger(); \
     if (logger->is_logging_code_events()) logger->Call; \
   } while (false)
-
-class JitLogger;
-class PerfBasicLogger;
-class LowLevelLogger;
-class PerfJitLogger;
-class ProfilerListener;
 
 class Logger : public CodeEventListener {
  public:
@@ -140,12 +140,6 @@ class Logger : public CodeEventListener {
   // object.
   void SuspectReadEvent(Name* name, Object* obj);
 
-  // Emits an event when a message is put on or read from a debugging queue.
-  // DebugTag lets us put a call-site specific label on the event.
-  void DebugTag(const char* call_site_tag);
-  void DebugEvent(const char* event_type, Vector<uint16_t> parameter);
-
-
   // ==== Events logged by --log-api. ====
   void ApiSecurityCheck();
   void ApiNamedPropertyAccess(const char* tag, JSObject* holder, Object* name);
@@ -183,26 +177,31 @@ class Logger : public CodeEventListener {
   void RegExpCodeCreateEvent(AbstractCode* code, String* source);
   // Emits a code move event.
   void CodeMoveEvent(AbstractCode* from, Address to);
-  // Emits a code line info add event with Postion type.
-  void CodeLinePosInfoAddPositionEvent(void* jit_handler_data,
-                                       int pc_offset,
-                                       int position);
-  // Emits a code line info add event with StatementPostion type.
-  void CodeLinePosInfoAddStatementPositionEvent(void* jit_handler_data,
-                                                int pc_offset,
-                                                int position);
-  // Emits a code line info start to record event
-  void CodeStartLinePosInfoRecordEvent(void** jit_handler_data_out);
-  // Emits a code line info finish record event.
-  // It's the callee's responsibility to dispose the parameter jit_handler_data.
-  void CodeEndLinePosInfoRecordEvent(AbstractCode* code,
-                                     void* jit_handler_data);
+  // Emits a code line info record event.
+  void CodeLinePosInfoRecordEvent(AbstractCode* code,
+                                  ByteArray* source_position_table);
 
   void SharedFunctionInfoMoveEvent(Address from, Address to);
 
   void CodeNameEvent(Address addr, int pos, const char* code_name);
 
-  void CodeDeoptEvent(Code* code, Address pc, int fp_to_sp_delta);
+  void CodeDeoptEvent(Code* code, DeoptKind kind, Address pc,
+                      int fp_to_sp_delta);
+
+  void ICEvent(const char* type, bool keyed, const Address pc, int line,
+               int column, Map* map, Object* key, char old_state,
+               char new_state, const char* modifier,
+               const char* slow_stub_reason);
+  void CompareIC(const Address pc, int line, int column, Code* stub,
+                 const char* op, const char* old_left, const char* old_right,
+                 const char* old_state, const char* new_left,
+                 const char* new_right, const char* new_state);
+  void BinaryOpIC(const Address pc, int line, int column, Code* stub,
+                  const char* old_state, const char* new_state,
+                  AllocationSite* allocation_site);
+  void ToBooleanIC(const Address pc, int line, int column, Code* stub,
+                   const char* old_state, const char* new_state);
+  void PatchIC(const Address pc, const Address test, int delta);
 
   // ==== Events logged by --log-gc. ====
   // Heap sampling events: start, end, and individual types.
@@ -233,11 +232,6 @@ class Logger : public CodeEventListener {
   INLINE(static void CallEventLogger(Isolate* isolate, const char* name,
                                      StartEnd se, bool expose_to_api));
 
-  // ==== Events logged by --log-regexp ====
-  // Regexp compilation and execution events.
-
-  void RegExpCompileEvent(Handle<JSRegExp> regexp, bool in_cache);
-
   bool is_logging() {
     return is_logging_;
   }
@@ -264,15 +258,6 @@ class Logger : public CodeEventListener {
   // Converts tag to a corresponding NATIVE_... if the script is native.
   INLINE(static CodeEventListener::LogEventsAndTags ToNativeByScript(
       CodeEventListener::LogEventsAndTags, Script*));
-
-  // Profiler's sampling interval (in milliseconds).
-#if defined(ANDROID)
-  // Phones and tablets have processors that are much slower than desktop
-  // and laptop computers for which current heuristics are tuned.
-  static const int kSamplingIntervalMs = 5;
-#else
-  static const int kSamplingIntervalMs = 1;
-#endif
 
   // Callback from Log, stops profiling in case of insufficient resources.
   void LogFailure();
@@ -350,7 +335,6 @@ class Logger : public CodeEventListener {
   base::ElapsedTimer timer_;
 
   friend class CpuProfiler;
-  friend class SourcePositionTableBuilder;
 };
 
 #define TIMER_EVENTS_LIST(V)    \
@@ -362,8 +346,7 @@ class Logger : public CodeEventListener {
   V(CompileCode, true)          \
   V(DeoptimizeCode, true)       \
   V(Execute, true)              \
-  V(External, true)             \
-  V(IcMiss, false)
+  V(External, true)
 
 #define V(TimerName, expose)                                                  \
   class TimerEvent##TimerName : public AllStatic {                            \
@@ -384,9 +367,8 @@ class TimerEventScope {
 
   ~TimerEventScope() { LogTimerEvent(Logger::END); }
 
-  void LogTimerEvent(Logger::StartEnd se);
-
  private:
+  void LogTimerEvent(Logger::StartEnd se);
   Isolate* isolate_;
 };
 
@@ -413,7 +395,8 @@ class CodeEventLogger : public CodeEventListener {
   void SetterCallbackEvent(Name* name, Address entry_point) override {}
   void SharedFunctionInfoMoveEvent(Address from, Address to) override {}
   void CodeMovingGCEvent() override {}
-  void CodeDeoptEvent(Code* code, Address pc, int fp_to_sp_delta) override {}
+  void CodeDeoptEvent(Code* code, DeoptKind kind, Address pc,
+                      int fp_to_sp_delta) override {}
 
  private:
   class NameBuffer;

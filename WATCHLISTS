@@ -63,6 +63,16 @@
     'gypfiles': {
       'filepath': 'gypfiles/',
     },
+    'inspector': {
+      'filepath': 'inspector',
+    },
+    'wasm': {
+      'filepath': 'src/wasm/' \
+                  '|src/compiler/wasm',
+    },
+    'value_serializer': {
+      'filepath': 'src/value-serializer',
+    }
   },
 
   'WATCHLISTS': {
@@ -74,7 +84,6 @@
     ],
     'interpreter': [
       'rmcilroy@chromium.org',
-      'oth@chromium.org',
     ],
     'feature_shipping_status': [
       'hablich@chromium.org',
@@ -96,6 +105,15 @@
     ],
     'gypfiles': [
       'machenbach@chromium.org',
+    ],
+    'inspector': [
+      'devtools-reviews@chromium.org',
+    ],
+    'wasm': [
+      'wasm-v8@google.com',
+    ],
+    'value_serializer': [
+      'jbroman+watch@chromium.org',
     ],
   },
 }

@@ -29,8 +29,8 @@
 #undef MAP_TYPE
 
 #include "src/base/macros.h"
+#include "src/base/platform/platform-posix.h"
 #include "src/base/platform/platform.h"
-
 
 namespace v8 {
 namespace base {
@@ -42,25 +42,34 @@ static inline void* mmapHelper(size_t len, int prot, int flags, int fildes,
   return mmap(addr, len, prot, flags, fildes, off);
 }
 
+class AIXTimezoneCache : public PosixTimezoneCache {
+  const char* LocalTimezone(double time) override;
 
-const char* OS::LocalTimezone(double time, TimezoneCache* cache) {
+  double LocalTimeOffset() override;
+
+  ~AIXTimezoneCache() override {}
+};
+
+const char* AIXTimezoneCache::LocalTimezone(double time) {
   if (std::isnan(time)) return "";
   time_t tv = static_cast<time_t>(floor(time / msPerSecond));
-  struct tm* t = localtime(&tv);  // NOLINT(runtime/threadsafe_fn)
+  struct tm tm;
+  struct tm* t = localtime_r(&tv, &tm);
   if (NULL == t) return "";
   return tzname[0];  // The location of the timezone string on AIX.
 }
 
-
-double OS::LocalTimeOffset(TimezoneCache* cache) {
+double AIXTimezoneCache::LocalTimeOffset() {
   // On AIX, struct tm does not contain a tm_gmtoff field.
   time_t utc = time(NULL);
   DCHECK(utc != -1);
-  struct tm* loc = localtime(&utc);  // NOLINT(runtime/threadsafe_fn)
+  struct tm tm;
+  struct tm* loc = localtime_r(&utc, &tm);
   DCHECK(loc != NULL);
   return static_cast<double>((mktime(loc) - utc) * msPerSecond);
 }
 
+TimezoneCache* OS::CreateTimezoneCache() { return new AIXTimezoneCache(); }
 
 void* OS::Allocate(const size_t requested, size_t* allocated, bool executable) {
   const size_t msize = RoundUp(requested, getpagesize());
@@ -215,13 +224,8 @@ void* VirtualMemory::ReserveRegion(size_t size) {
 
 
 bool VirtualMemory::CommitRegion(void* base, size_t size, bool is_executable) {
-#if defined(__native_client__)
-  // The Native Client port of V8 uses an interpreter,
-  // so code pages don't need PROT_EXEC.
-  int prot = PROT_READ | PROT_WRITE;
-#else
   int prot = PROT_READ | PROT_WRITE | (is_executable ? PROT_EXEC : 0);
-#endif
+
   if (mprotect(base, size, prot) == -1) return false;
 
   return true;

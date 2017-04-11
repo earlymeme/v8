@@ -28,8 +28,8 @@ class CompilationDependencies {
   void AssumeInitialMapCantChange(Handle<Map> map) {
     Insert(DependentCode::kInitialMapChangedGroup, map);
   }
-  void AssumeFieldType(Handle<Map> map) {
-    Insert(DependentCode::kFieldTypeGroup, map);
+  void AssumeFieldOwner(Handle<Map> map) {
+    Insert(DependentCode::kFieldOwnerGroup, map);
   }
   void AssumeMapStable(Handle<Map> map);
   void AssumePrototypeMapsStable(
@@ -63,7 +63,7 @@ class CompilationDependencies {
   bool aborted_;
   ZoneList<Handle<HeapObject> >* groups_[DependentCode::kGroupCount];
 
-  DependentCode* Get(Handle<Object> object);
+  DependentCode* Get(Handle<Object> object) const;
   void Set(Handle<Object> object, Handle<DependentCode> dep);
 };
 }  // namespace internal

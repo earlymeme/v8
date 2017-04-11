@@ -102,6 +102,46 @@ void IndexedEnumerator(const v8::PropertyCallbackInfo<v8::Array>& info) {
   info.GetReturnValue().Set(names);
 }
 
+void MethodGetter(v8::Local<v8::Name> property,
+                  const v8::PropertyCallbackInfo<v8::Value>& info) {
+  v8::Isolate* isolate = info.GetIsolate();
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+
+  v8::Local<v8::External> data = info.Data().As<v8::External>();
+  v8::Local<v8::FunctionTemplate>& function_template =
+      *reinterpret_cast<v8::Local<v8::FunctionTemplate>*>(data->Value());
+
+  info.GetReturnValue().Set(
+      function_template->GetFunction(context).ToLocalChecked());
+}
+
+void MethodCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  info.GetReturnValue().Set(8);
+}
+
+void NamedGetterThrowsException(
+    v8::Local<v8::Name> property,
+    const v8::PropertyCallbackInfo<v8::Value>& info) {
+  info.GetIsolate()->ThrowException(v8_str("exception"));
+}
+
+void NamedSetterThrowsException(
+    v8::Local<v8::Name> property, v8::Local<v8::Value> value,
+    const v8::PropertyCallbackInfo<v8::Value>& info) {
+  info.GetIsolate()->ThrowException(v8_str("exception"));
+}
+
+void IndexedGetterThrowsException(
+    uint32_t index, const v8::PropertyCallbackInfo<v8::Value>& info) {
+  info.GetIsolate()->ThrowException(v8_str("exception"));
+}
+
+void IndexedSetterThrowsException(
+    uint32_t index, v8::Local<v8::Value> value,
+    const v8::PropertyCallbackInfo<v8::Value>& info) {
+  info.GetIsolate()->ThrowException(v8_str("exception"));
+}
+
 bool AccessCheck(v8::Local<v8::Context> accessing_context,
                  v8::Local<v8::Object> accessed_object,
                  v8::Local<v8::Value> data) {
@@ -181,6 +221,60 @@ void CheckCrossContextAccess(v8::Isolate* isolate,
                "[\"7\",\"cross_context_int\"]");
 }
 
+void CheckCrossContextAccessWithException(
+    v8::Isolate* isolate, v8::Local<v8::Context> accessing_context,
+    v8::Local<v8::Object> accessed_object) {
+  v8::HandleScope handle_scope(isolate);
+  accessing_context->Global()
+      ->Set(accessing_context, v8_str("other"), accessed_object)
+      .FromJust();
+  v8::Context::Scope context_scope(accessing_context);
+
+  {
+    v8::TryCatch try_catch(isolate);
+    CompileRun("this.other.should_throw");
+    CHECK(try_catch.HasCaught());
+    CHECK(try_catch.Exception()->IsString());
+    CHECK(v8_str("exception")
+              ->Equals(accessing_context, try_catch.Exception())
+              .FromJust());
+  }
+
+  {
+    v8::TryCatch try_catch(isolate);
+    CompileRun("this.other.should_throw = 8");
+    CHECK(try_catch.HasCaught());
+    CHECK(try_catch.Exception()->IsString());
+    CHECK(v8_str("exception")
+              ->Equals(accessing_context, try_catch.Exception())
+              .FromJust());
+  }
+
+  {
+    v8::TryCatch try_catch(isolate);
+    CompileRun("this.other[42]");
+    CHECK(try_catch.HasCaught());
+    CHECK(try_catch.Exception()->IsString());
+    CHECK(v8_str("exception")
+              ->Equals(accessing_context, try_catch.Exception())
+              .FromJust());
+  }
+
+  {
+    v8::TryCatch try_catch(isolate);
+    CompileRun("this.other[42] = 8");
+    CHECK(try_catch.HasCaught());
+    CHECK(try_catch.Exception()->IsString());
+    CHECK(v8_str("exception")
+              ->Equals(accessing_context, try_catch.Exception())
+              .FromJust());
+  }
+}
+
+void Ctor(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  CHECK(info.IsConstructCall());
+}
+
 }  // namespace
 
 TEST(AccessCheckWithInterceptor) {
@@ -209,6 +303,70 @@ TEST(AccessCheckWithInterceptor) {
   v8::Local<v8::Context> context1 =
       v8::Context::New(isolate, nullptr, global_template);
   CheckCrossContextAccess(isolate, context1, context0->Global());
+}
+
+TEST(CallFunctionWithRemoteContextReceiver) {
+  v8::Isolate* isolate = CcTest::isolate();
+  v8::HandleScope scope(isolate);
+  v8::Local<v8::FunctionTemplate> global_template =
+      v8::FunctionTemplate::New(isolate);
+
+  v8::Local<v8::Signature> signature =
+      v8::Signature::New(isolate, global_template);
+  v8::Local<v8::FunctionTemplate> function_template = v8::FunctionTemplate::New(
+      isolate, MethodCallback, v8::External::New(isolate, &function_template),
+      signature);
+
+  global_template->InstanceTemplate()->SetAccessCheckCallbackAndHandler(
+      AccessCheck, v8::NamedPropertyHandlerConfiguration(
+                       MethodGetter, nullptr, nullptr, nullptr, nullptr,
+                       v8::External::New(isolate, &function_template)),
+      v8::IndexedPropertyHandlerConfiguration());
+
+  v8::Local<v8::Object> accessed_object =
+      v8::Context::NewRemoteContext(isolate,
+                                    global_template->InstanceTemplate())
+          .ToLocalChecked();
+  v8::Local<v8::Context> accessing_context =
+      v8::Context::New(isolate, nullptr, global_template->InstanceTemplate());
+
+  v8::HandleScope handle_scope(isolate);
+  accessing_context->Global()
+      ->Set(accessing_context, v8_str("other"), accessed_object)
+      .FromJust();
+  v8::Context::Scope context_scope(accessing_context);
+
+  {
+    v8::TryCatch try_catch(isolate);
+    ExpectInt32("this.other.method()", 8);
+    CHECK(!try_catch.HasCaught());
+  }
+}
+
+TEST(AccessCheckWithExceptionThrowingInterceptor) {
+  v8::Isolate* isolate = CcTest::isolate();
+  isolate->SetFailedAccessCheckCallbackFunction([](v8::Local<v8::Object> target,
+                                                   v8::AccessType type,
+                                                   v8::Local<v8::Value> data) {
+    CHECK(false);  // This should never be called.
+  });
+
+  v8::HandleScope scope(isolate);
+  v8::Local<v8::ObjectTemplate> global_template =
+      v8::ObjectTemplate::New(isolate);
+  global_template->SetAccessCheckCallbackAndHandler(
+      AccessCheck, v8::NamedPropertyHandlerConfiguration(
+                       NamedGetterThrowsException, NamedSetterThrowsException),
+      v8::IndexedPropertyHandlerConfiguration(IndexedGetterThrowsException,
+                                              IndexedSetterThrowsException));
+
+  // Create two contexts.
+  v8::Local<v8::Context> context0 =
+      v8::Context::New(isolate, nullptr, global_template);
+  v8::Local<v8::Context> context1 =
+      v8::Context::New(isolate, nullptr, global_template);
+
+  CheckCrossContextAccessWithException(isolate, context1, context0->Global());
 }
 
 TEST(NewRemoteContext) {
@@ -275,4 +433,27 @@ TEST(NewRemoteContext) {
 
     CheckCanRunScriptInContext(isolate, context5);
   }
+}
+
+TEST(NewRemoteInstance) {
+  v8::Isolate* isolate = CcTest::isolate();
+  v8::HandleScope scope(isolate);
+  v8::Local<v8::FunctionTemplate> tmpl =
+      v8::FunctionTemplate::New(isolate, Ctor);
+  v8::Local<v8::ObjectTemplate> instance = tmpl->InstanceTemplate();
+  instance->SetAccessCheckCallbackAndHandler(
+      AccessCheck,
+      v8::NamedPropertyHandlerConfiguration(
+          NamedGetter, NamedSetter, NamedQuery, NamedDeleter, NamedEnumerator),
+      v8::IndexedPropertyHandlerConfiguration(IndexedGetter, IndexedSetter,
+                                              IndexedQuery, IndexedDeleter,
+                                              IndexedEnumerator));
+  tmpl->SetNativeDataProperty(
+      v8_str("all_can_read"), Return42, nullptr, v8::Local<v8::Value>(),
+      v8::None, v8::Local<v8::AccessorSignature>(), v8::ALL_CAN_READ);
+
+  v8::Local<v8::Object> obj = tmpl->NewRemoteInstance().ToLocalChecked();
+
+  v8::Local<v8::Context> context = v8::Context::New(isolate);
+  CheckCrossContextAccess(isolate, context, obj);
 }

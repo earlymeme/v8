@@ -6,6 +6,7 @@
 #define V8_COMPILER_REGISTER_CONFIGURATION_H_
 
 #include "src/base/macros.h"
+#include "src/globals.h"
 #include "src/machine-type.h"
 
 namespace v8 {
@@ -13,7 +14,7 @@ namespace internal {
 
 // An architecture independent representation of the sets of registers available
 // for instruction creation.
-class RegisterConfiguration {
+class V8_EXPORT_PRIVATE RegisterConfiguration {
  public:
   enum AliasingKind {
     // Registers alias a single register of every other size (e.g. Intel).
@@ -65,6 +66,9 @@ class RegisterConfiguration {
   }
   int32_t allocatable_double_codes_mask() const {
     return allocatable_double_codes_mask_;
+  }
+  int32_t allocatable_float_codes_mask() const {
+    return allocatable_float_codes_mask_;
   }
   int GetAllocatableGeneralCode(int index) const {
     return allocatable_general_codes_[index];

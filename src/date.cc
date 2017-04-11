@@ -25,7 +25,7 @@ static const char kDaysInMonths[] =
 void DateCache::ResetDateCache() {
   static const int kMaxStamp = Smi::kMaxValue;
   if (stamp_->value() >= kMaxStamp) {
-    stamp_ = Smi::FromInt(0);
+    stamp_ = Smi::kZero;
   } else {
     stamp_ = Smi::FromInt(stamp_->value() + 1);
   }
@@ -38,7 +38,9 @@ void DateCache::ResetDateCache() {
   after_ = &dst_[1];
   local_offset_ms_ = kInvalidLocalOffsetInMs;
   ymd_valid_ = false;
-  base::OS::ClearTimezoneCache(tz_cache_);
+  tz_cache_->Clear();
+  tz_name_ = nullptr;
+  dst_tz_name_ = nullptr;
 }
 
 

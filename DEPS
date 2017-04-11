@@ -3,51 +3,63 @@
 # all paths in here must match this assumption.
 
 vars = {
-  "git_url": "https://chromium.googlesource.com",
+  "chromium_url": "https://chromium.googlesource.com",
 }
 
 deps = {
   "v8/build":
-    Var("git_url") + "/chromium/src/build.git" + "@" + "6d9becf753310daf17f04ac4f0d8c109c364cdd2",
+    Var("chromium_url") + "/chromium/src/build.git" + "@" + "94c06fe70f3f6429c59e3ec0f6acd4f6710050b2",
   "v8/tools/gyp":
-    Var("git_url") + "/external/gyp.git" + "@" + "bac4680ec9a5c55ab692490b6732999648ecf1e9",
+    Var("chromium_url") + "/external/gyp.git" + "@" + "e7079f0e0e14108ab0dba58728ff219637458563",
   "v8/third_party/icu":
-    Var("git_url") + "/chromium/deps/icu.git" + "@" + "ffa4b6704cf5cc9fec9485731f24a05b2ba94bca",
+    Var("chromium_url") + "/chromium/deps/icu.git" + "@" + "450be73c9ee8ae29d43d4fdc82febb2a5f62bfb5",
+  "v8/third_party/instrumented_libraries":
+    Var("chromium_url") + "/chromium/src/third_party/instrumented_libraries.git" + "@" + "05d5695a73e78b9cae55b8579fd8bf22b85eb283",
   "v8/buildtools":
-    Var("git_url") + "/chromium/buildtools.git" + "@" + "aa47d9773d8f4d6254a587a1240b3dc023d54f06",
+    Var("chromium_url") + "/chromium/buildtools.git" + "@" + "d3074448541662f242bcee623049c13a231b5648",
   "v8/base/trace_event/common":
-    Var("git_url") + "/chromium/src/base/trace_event/common.git" + "@" + "54b8455be9505c2cb0cf5c26bb86739c236471aa",
-  "v8/tools/mb":
-    Var('git_url') + '/chromium/src/tools/mb.git' + '@' + "ea4154b4daca60a5f5c04ef764b7eaf50362250c",
+    Var("chromium_url") + "/chromium/src/base/trace_event/common.git" + "@" + "06294c8a4a6f744ef284cd63cfe54dbf61eea290",
+  "v8/third_party/jinja2":
+    Var("chromium_url") + "/chromium/src/third_party/jinja2.git" + "@" + "d34383206fa42d52faa10bb9931d6d538f3a57e0",
+  "v8/third_party/markupsafe":
+    Var("chromium_url") + "/chromium/src/third_party/markupsafe.git" + "@" + "8f45f5cfa0009d2a70589bcda0349b8cb2b72783",
   "v8/tools/swarming_client":
-    Var('git_url') + '/external/swarming.client.git' + '@' + "df6e95e7669883c8fe9ef956c69a544154701a49",
+    Var('chromium_url') + '/external/swarming.client.git' + '@' + "11e31afa5d330756ff87aa12064bb5d032896cb5",
   "v8/testing/gtest":
-    Var("git_url") + "/external/github.com/google/googletest.git" + "@" + "6f8a66431cb592dad629028a50b3dd418a408c87",
+    Var("chromium_url") + "/external/github.com/google/googletest.git" + "@" + "6f8a66431cb592dad629028a50b3dd418a408c87",
   "v8/testing/gmock":
-    Var("git_url") + "/external/googlemock.git" + "@" + "0421b6f358139f02e102c9c332ce19a33faf75be",
+    Var("chromium_url") + "/external/googlemock.git" + "@" + "0421b6f358139f02e102c9c332ce19a33faf75be",
   "v8/test/benchmarks/data":
-    Var("git_url") + "/v8/deps/third_party/benchmarks.git" + "@" + "05d7188267b4560491ff9155c5ee13e207ecd65f",
+    Var("chromium_url") + "/v8/deps/third_party/benchmarks.git" + "@" + "05d7188267b4560491ff9155c5ee13e207ecd65f",
   "v8/test/mozilla/data":
-    Var("git_url") + "/v8/deps/third_party/mozilla-tests.git" + "@" + "f6c578a10ea707b1a8ab0b88943fe5115ce2b9be",
-  "v8/test/simdjs/data": Var("git_url") + "/external/github.com/tc39/ecmascript_simd.git" + "@" + "baf493985cb9ea7cdbd0d68704860a8156de9556",
+    Var("chromium_url") + "/v8/deps/third_party/mozilla-tests.git" + "@" + "f6c578a10ea707b1a8ab0b88943fe5115ce2b9be",
   "v8/test/test262/data":
-    Var("git_url") + "/external/github.com/tc39/test262.git" + "@" + "88bc7fe7586f161201c5f14f55c9c489f82b1b67",
+    Var("chromium_url") + "/external/github.com/tc39/test262.git" + "@" + "230f9fc5688ce76bfaa99aba5f680a159eaac9e2",
+  "v8/test/test262/harness":
+    Var("chromium_url") + "/external/github.com/test262-utils/test262-harness-py.git" + "@" + "0f2acdd882c84cff43b9d60df7574a1901e2cdcd",
   "v8/tools/clang":
-    Var("git_url") + "/chromium/src/tools/clang.git" + "@" + "5fe81a4bccaa62fa983c0d83b9024e973f293116",
+    Var("chromium_url") + "/chromium/src/tools/clang.git" + "@" + "49df471350a60efaec6951f321dd65475496ba17",
+  "v8/test/wasm-js":
+    Var("chromium_url") + "/external/github.com/WebAssembly/spec.git" + "@" + "002e57c86ccf5c80db0de6e40246665340350c43",
 }
 
 deps_os = {
   "android": {
     "v8/third_party/android_tools":
-      Var("git_url") + "/android_tools.git" + "@" + "5b5f2f60b78198eaef25d442ac60f823142a8a6e",
+      Var("chromium_url") + "/android_tools.git" + "@" + "b65c4776dac2cf1b80e969b3b2d4e081b9c84f29",
+    "v8/third_party/catapult":
+      Var('chromium_url') + "/external/github.com/catapult-project/catapult.git" + "@" + "9a55abab029cb9ae94f5160ded11b09a4638a955",
   },
   "win": {
     "v8/third_party/cygwin":
-      Var("git_url") + "/chromium/deps/cygwin.git" + "@" + "c89e446b273697fadf3a10ff1007a97c0b7de6df",
+      Var("chromium_url") + "/chromium/deps/cygwin.git" + "@" + "c89e446b273697fadf3a10ff1007a97c0b7de6df",
   }
 }
 
-recursedeps = [ 'v8/third_party/android_tools' ]
+recursedeps = [
+  "v8/buildtools",
+  "v8/third_party/android_tools",
+]
 
 include_rules = [
   # Everybody can use some things.
@@ -194,6 +206,39 @@ hooks = [
     ],
   },
   {
+    "name": "wasm_fuzzer",
+    "pattern": ".",
+    "action": [ "download_from_google_storage",
+                "--no_resume",
+                "--no_auth",
+                "-u",
+                "--bucket", "v8-wasm-fuzzer",
+                "-s", "v8/test/fuzzer/wasm.tar.gz.sha1",
+    ],
+  },
+  {
+    "name": "wasm_asmjs_fuzzer",
+    "pattern": ".",
+    "action": [ "download_from_google_storage",
+                "--no_resume",
+                "--no_auth",
+                "-u",
+                "--bucket", "v8-wasm-asmjs-fuzzer",
+                "-s", "v8/test/fuzzer/wasm_asmjs.tar.gz.sha1",
+    ],
+  },
+  {
+    "name": "closure_compiler",
+    "pattern": ".",
+    "action": [ "download_from_google_storage",
+                "--no_resume",
+                "--no_auth",
+                "-u",
+                "--bucket", "chromium-v8-closure-compiler",
+                "-s", "v8/src/inspector/build/closure-compiler.tar.gz.sha1",
+    ],
+  },
+  {
     # Downloads the current stable linux sysroot to build/linux/ if needed.
     # This sysroot updates at about the same rate that the chrome build deps
     # change.
@@ -206,10 +251,20 @@ hooks = [
     ],
   },
   {
+    # Pull sanitizer-instrumented third-party libraries if requested via
+    # GYP_DEFINES.
+    'name': 'instrumented_libraries',
+    'pattern': '\\.sha1',
+    'action': [
+        'python',
+        'v8/third_party/instrumented_libraries/scripts/download_binaries.py',
+    ],
+  },
+  {
     # Update the Windows toolchain if necessary.
     'name': 'win_toolchain',
     'pattern': '.',
-    'action': ['python', 'v8/gypfiles/vs_toolchain.py', 'update'],
+    'action': ['python', 'v8/build/vs_toolchain.py', 'update'],
   },
   # Pull binutils for linux, enabled debug fission for faster linking /
   # debugging when used with clang on Ubuntu Precise.
@@ -239,6 +294,6 @@ hooks = [
   {
     # A change to a .gyp, .gypi, or to GYP itself should run the generator.
     "pattern": ".",
-    "action": ["python", "v8/gypfiles/gyp_v8"],
+    "action": ["python", "v8/gypfiles/gyp_v8", "--running-as-hook"],
   },
 ]

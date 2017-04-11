@@ -15,40 +15,78 @@ namespace v8 {
 namespace internal {
 namespace wasm {
 
-std::ostream& operator<<(std::ostream& os, const ErrorCode& error_code) {
-  switch (error_code) {
-    case kSuccess:
-      os << "Success";
-      break;
-    default:  // TODO(titzer): render error codes
-      os << "Error";
-      break;
-  }
-  return os;
-}
-
-void ErrorThrower::Error(const char* format, ...) {
+void ErrorThrower::Format(i::Handle<i::JSFunction> constructor,
+                          const char* format, va_list args) {
   // Only report the first error.
   if (error()) return;
 
-  char buffer[256];
+  constexpr int kMaxErrorMessageLength = 256;
+  EmbeddedVector<char, kMaxErrorMessageLength> buffer;
+
+  int context_len = 0;
+  if (context_) {
+    context_len = SNPrintF(buffer, "%s: ", context_);
+    CHECK_LE(0, context_len);  // check for overflow.
+  }
+
+  int message_len =
+      VSNPrintF(buffer.SubVector(context_len, buffer.length()), format, args);
+  CHECK_LE(0, message_len);  // check for overflow.
+
+  Vector<char> whole_message = buffer.SubVector(0, context_len + message_len);
+  i::Handle<i::String> message =
+      isolate_->factory()
+          ->NewStringFromOneByte(Vector<uint8_t>::cast(whole_message))
+          .ToHandleChecked();
+  exception_ = isolate_->factory()->NewError(constructor, message);
+}
+
+void ErrorThrower::TypeError(const char* format, ...) {
+  if (error()) return;
   va_list arguments;
   va_start(arguments, format);
-  base::OS::VSNPrintF(buffer, 255, format, arguments);
+  Format(isolate_->type_error_function(), format, arguments);
   va_end(arguments);
+}
 
-  std::ostringstream str;
-  if (context_ != nullptr) {
-    str << context_ << ": ";
-  }
-  str << buffer;
+void ErrorThrower::RangeError(const char* format, ...) {
+  if (error()) return;
+  va_list arguments;
+  va_start(arguments, format);
+  Format(isolate_->range_error_function(), format, arguments);
+  va_end(arguments);
+}
 
-  message_ = isolate_->factory()->NewStringFromAsciiChecked(str.str().c_str());
+void ErrorThrower::CompileError(const char* format, ...) {
+  if (error()) return;
+  wasm_error_ = true;
+  va_list arguments;
+  va_start(arguments, format);
+  Format(isolate_->wasm_compile_error_function(), format, arguments);
+  va_end(arguments);
+}
+
+void ErrorThrower::LinkError(const char* format, ...) {
+  if (error()) return;
+  wasm_error_ = true;
+  va_list arguments;
+  va_start(arguments, format);
+  Format(isolate_->wasm_link_error_function(), format, arguments);
+  va_end(arguments);
+}
+
+void ErrorThrower::RuntimeError(const char* format, ...) {
+  if (error()) return;
+  wasm_error_ = true;
+  va_list arguments;
+  va_start(arguments, format);
+  Format(isolate_->wasm_runtime_error_function(), format, arguments);
+  va_end(arguments);
 }
 
 ErrorThrower::~ErrorThrower() {
   if (error() && !isolate_->has_pending_exception()) {
-    isolate_->ScheduleThrow(*message_);
+    isolate_->ScheduleThrow(*exception_);
   }
 }
 }  // namespace wasm

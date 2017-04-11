@@ -5,11 +5,13 @@
 #ifndef V8_INTERPRETER_INTERPRETER_H_
 #define V8_INTERPRETER_INTERPRETER_H_
 
+#include <memory>
+
 // Clients of this interface shouldn't depend on lots of interpreter internals.
 // Do not include anything from src/interpreter other than
 // src/interpreter/bytecodes.h here!
 #include "src/base/macros.h"
-#include "src/builtins.h"
+#include "src/builtins/builtins.h"
 #include "src/interpreter/bytecodes.h"
 #include "src/parsing/token.h"
 #include "src/runtime/runtime.h"
@@ -20,10 +22,8 @@ namespace internal {
 class Isolate;
 class Callable;
 class CompilationInfo;
-
-namespace compiler {
-class Node;
-}  // namespace compiler
+class CompilationJob;
+class SetupIsolateDelegate;
 
 namespace interpreter {
 
@@ -34,14 +34,11 @@ class Interpreter {
   explicit Interpreter(Isolate* isolate);
   virtual ~Interpreter() {}
 
-  // Initializes the interpreter dispatch table.
-  void Initialize();
-
   // Returns the interrupt budget which should be used for the profiler counter.
   static int InterruptBudget();
 
-  // Generate bytecode for |info|.
-  static bool MakeBytecode(CompilationInfo* info);
+  // Creates a compilation job which will generate bytecode for |info|.
+  static CompilationJob* NewCompilationJob(CompilationInfo* info);
 
   // Return bytecode handler for |bytecode|.
   Code* GetBytecodeHandler(Bytecode bytecode, OperandScale operand_scale);
@@ -50,10 +47,9 @@ class Interpreter {
   void IterateDispatchTable(ObjectVisitor* v);
 
   // Disassembler support (only useful with ENABLE_DISASSEMBLER defined).
-  void TraceCodegen(Handle<Code> code);
   const char* LookupNameOfBytecodeHandler(Code* code);
 
-  Local<v8::Object> GetDispatchCountersObject();
+  V8_EXPORT_PRIVATE Local<v8::Object> GetDispatchCountersObject();
 
   Address dispatch_table_address() {
     return reinterpret_cast<Address>(&dispatch_table_[0]);
@@ -63,95 +59,12 @@ class Interpreter {
     return reinterpret_cast<Address>(bytecode_dispatch_counters_table_.get());
   }
 
+  // TODO(ignition): Tune code size multiplier.
+  static const int kCodeSizeMultiplier = 24;
+
  private:
-// Bytecode handler generator functions.
-#define DECLARE_BYTECODE_HANDLER_GENERATOR(Name, ...) \
-  void Do##Name(InterpreterAssembler* assembler);
-  BYTECODE_LIST(DECLARE_BYTECODE_HANDLER_GENERATOR)
-#undef DECLARE_BYTECODE_HANDLER_GENERATOR
-
-  // Generates code to perform the binary operation via |Generator|.
-  template <class Generator>
-  void DoBinaryOp(InterpreterAssembler* assembler);
-
-  // Generates code to perform the binary operation via |Generator| using
-  // an immediate value rather the accumulator as the rhs operand.
-  template <class Generator>
-  void DoBinaryOpWithImmediate(InterpreterAssembler* assembler);
-
-  // Generates code to perform the unary operation via |callable|.
-  void DoUnaryOp(Callable callable, InterpreterAssembler* assembler);
-
-  // Generates code to perform the unary operation via |Generator|.
-  template <class Generator>
-  void DoUnaryOp(InterpreterAssembler* assembler);
-
-  // Generates code to perform the comparison operation associated with
-  // |compare_op|.
-  void DoCompareOp(Token::Value compare_op, InterpreterAssembler* assembler);
-
-  // Generates code to perform a global store via |ic|.
-  void DoStaGlobal(Callable ic, InterpreterAssembler* assembler);
-
-  // Generates code to perform a named property store via |ic|.
-  void DoStoreIC(Callable ic, InterpreterAssembler* assembler);
-
-  // Generates code to perform a keyed property store via |ic|.
-  void DoKeyedStoreIC(Callable ic, InterpreterAssembler* assembler);
-
-  // Generates code to perform a JS call.
-  void DoJSCall(InterpreterAssembler* assembler, TailCallMode tail_call_mode);
-
-  // Generates code to perform a runtime call.
-  void DoCallRuntimeCommon(InterpreterAssembler* assembler);
-
-  // Generates code to perform a runtime call returning a pair.
-  void DoCallRuntimeForPairCommon(InterpreterAssembler* assembler);
-
-  // Generates code to perform a JS runtime call.
-  void DoCallJSRuntimeCommon(InterpreterAssembler* assembler);
-
-  // Generates code to perform a constructor call.
-  void DoCallConstruct(InterpreterAssembler* assembler);
-
-  // Generates code to perform delete via function_id.
-  void DoDelete(Runtime::FunctionId function_id,
-                InterpreterAssembler* assembler);
-
-  // Generates code to perform a lookup slot load via |function_id|.
-  void DoLdaLookupSlot(Runtime::FunctionId function_id,
-                       InterpreterAssembler* assembler);
-
-  // Generates code to perform a lookup slot store depending on |language_mode|.
-  void DoStaLookupSlot(LanguageMode language_mode,
-                       InterpreterAssembler* assembler);
-
-  // Generates a node with the undefined constant.
-  compiler::Node* BuildLoadUndefined(InterpreterAssembler* assembler);
-
-  // Generates code to load a context slot.
-  compiler::Node* BuildLoadContextSlot(InterpreterAssembler* assembler);
-
-  // Generates code to load a global.
-  compiler::Node* BuildLoadGlobal(Callable ic, InterpreterAssembler* assembler);
-
-  // Generates code to load a named property.
-  compiler::Node* BuildLoadNamedProperty(Callable ic,
-                                         InterpreterAssembler* assembler);
-
-  // Generates code to load a keyed property.
-  compiler::Node* BuildLoadKeyedProperty(Callable ic,
-                                         InterpreterAssembler* assembler);
-
-  // Generates code to perform logical-not on boolean |value| and returns the
-  // result.
-  compiler::Node* BuildLogicalNot(compiler::Node* value,
-                                  InterpreterAssembler* assembler);
-
-  // Generates code to convert |value| to a boolean and returns the
-  // result.
-  compiler::Node* BuildToBoolean(compiler::Node* value,
-                                 InterpreterAssembler* assembler);
+  friend class SetupInterpreter;
+  friend class v8::internal::SetupIsolateDelegate;
 
   uintptr_t GetDispatchCounter(Bytecode from, Bytecode to) const;
 
@@ -167,7 +80,7 @@ class Interpreter {
 
   Isolate* isolate_;
   Address dispatch_table_[kDispatchTableSize];
-  v8::base::SmartArrayPointer<uintptr_t> bytecode_dispatch_counters_table_;
+  std::unique_ptr<uintptr_t[]> bytecode_dispatch_counters_table_;
 
   DISALLOW_COPY_AND_ASSIGN(Interpreter);
 };

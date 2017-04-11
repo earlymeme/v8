@@ -37,6 +37,8 @@
 #include <cmath>
 #include <cstdlib>
 
+#include "src/base/platform/platform-posix.h"
+
 #include "src/base/lazy-instance.h"
 #include "src/base/macros.h"
 #include "src/base/platform/platform.h"
@@ -55,7 +57,7 @@
 #include <sys/prctl.h>  // NOLINT, for prctl
 #endif
 
-#if !defined(V8_OS_NACL) && !defined(_AIX)
+#ifndef _AIX
 #include <sys/syscall.h>
 #endif
 
@@ -99,6 +101,20 @@ intptr_t OS::CommitPageSize() {
   return page_size;
 }
 
+void* OS::AllocateGuarded(const size_t requested) {
+  size_t allocated = 0;
+  const bool is_executable = false;
+  void* mbase = OS::Allocate(requested, &allocated, is_executable);
+  if (allocated != requested) {
+    OS::Free(mbase, allocated);
+    return nullptr;
+  }
+  if (mbase == nullptr) {
+    return nullptr;
+  }
+  OS::Guard(mbase, requested);
+  return mbase;
+}
 
 void OS::Free(void* address, const size_t size) {
   // TODO(1240712): munmap has a return value which is ignored here.
@@ -113,10 +129,6 @@ void OS::ProtectCode(void* address, const size_t size) {
 #if V8_OS_CYGWIN
   DWORD old_protect;
   VirtualProtect(address, size, PAGE_EXECUTE_READ, &old_protect);
-#elif V8_OS_NACL
-  // The Native Client port of V8 uses an interpreter, so
-  // code pages don't need PROT_EXEC.
-  mprotect(address, size, PROT_READ);
 #else
   mprotect(address, size, PROT_READ | PROT_EXEC);
 #endif
@@ -133,6 +145,15 @@ void OS::Guard(void* address, const size_t size) {
 #endif
 }
 
+// Make a region of memory readable and writable.
+void OS::Unprotect(void* address, const size_t size) {
+#if V8_OS_CYGWIN
+  DWORD oldprotect;
+  VirtualProtect(address, size, PAGE_READWRITE, &oldprotect);
+#else
+  mprotect(address, size, PROT_READ | PROT_WRITE);
+#endif
+}
 
 static LazyInstance<RandomNumberGenerator>::type
     platform_random_number_generator = LAZY_INSTANCE_INITIALIZER;
@@ -154,12 +175,6 @@ const char* OS::GetGCFakeMMapFile() {
 
 
 void* OS::GetRandomMmapAddr() {
-#if V8_OS_NACL
-  // TODO(bradchen): restore randomization once Native Client gets
-  // smarter about using mmap address hints.
-  // See http://code.google.com/p/nativeclient/issues/3341
-  return NULL;
-#endif
 #if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER) || \
     defined(THREAD_SANITIZER)
   // Dynamic tools do not support custom mmap addresses.
@@ -256,11 +271,7 @@ void OS::DebugBreak() {
 #elif V8_HOST_ARCH_PPC
   asm("twge 2,2");
 #elif V8_HOST_ARCH_IA32
-#if V8_OS_NACL
-  asm("hlt");
-#else
   asm("int $3");
-#endif  // V8_OS_NACL
 #elif V8_HOST_ARCH_X64
   asm("int $3");
 #elif V8_HOST_ARCH_S390
@@ -358,17 +369,12 @@ int OS::GetCurrentThreadId() {
 //
 
 int OS::GetUserTime(uint32_t* secs, uint32_t* usecs) {
-#if V8_OS_NACL
-  // Optionally used in Logger::ResourceEvent.
-  return -1;
-#else
   struct rusage usage;
 
   if (getrusage(RUSAGE_SELF, &usage) < 0) return -1;
   *secs = static_cast<uint32_t>(usage.ru_utime.tv_sec);
   *usecs = static_cast<uint32_t>(usage.ru_utime.tv_usec);
   return 0;
-#endif
 }
 
 
@@ -376,29 +382,31 @@ double OS::TimeCurrentMillis() {
   return Time::Now().ToJsTime();
 }
 
-
-class TimezoneCache {};
-
-
-TimezoneCache* OS::CreateTimezoneCache() {
-  return NULL;
+#if !V8_OS_AIX && !V8_OS_SOLARIS && !V8_OS_CYGWIN
+const char* PosixTimezoneCache::LocalTimezone(double time) {
+  if (std::isnan(time)) return "";
+  time_t tv = static_cast<time_t>(std::floor(time / msPerSecond));
+  struct tm tm;
+  struct tm* t = localtime_r(&tv, &tm);
+  if (!t || !t->tm_zone) return "";
+  return t->tm_zone;
 }
 
-
-void OS::DisposeTimezoneCache(TimezoneCache* cache) {
-  DCHECK(cache == NULL);
+double PosixTimezoneCache::LocalTimeOffset() {
+  time_t tv = time(NULL);
+  struct tm tm;
+  struct tm* t = localtime_r(&tv, &tm);
+  // tm_gmtoff includes any daylight savings offset, so subtract it.
+  return static_cast<double>(t->tm_gmtoff * msPerSecond -
+                             (t->tm_isdst > 0 ? 3600 * msPerSecond : 0));
 }
+#endif
 
-
-void OS::ClearTimezoneCache(TimezoneCache* cache) {
-  DCHECK(cache == NULL);
-}
-
-
-double OS::DaylightSavingsOffset(double time, TimezoneCache*) {
+double PosixTimezoneCache::DaylightSavingsOffset(double time) {
   if (std::isnan(time)) return std::numeric_limits<double>::quiet_NaN();
   time_t tv = static_cast<time_t>(std::floor(time/msPerSecond));
-  struct tm* t = localtime(&tv);  // NOLINT(runtime/threadsafe_fn)
+  struct tm tm;
+  struct tm* t = localtime_r(&tv, &tm);
   if (NULL == t) return std::numeric_limits<double>::quiet_NaN();
   return t->tm_isdst > 0 ? 3600 * msPerSecond : 0;
 }
@@ -614,20 +622,20 @@ void Thread::Start() {
   memset(&attr, 0, sizeof(attr));
   result = pthread_attr_init(&attr);
   DCHECK_EQ(0, result);
-  // Native client uses default stack size.
-#if !V8_OS_NACL
   size_t stack_size = stack_size_;
-#if V8_OS_AIX
   if (stack_size == 0) {
-    // Default on AIX is 96KB -- bump up to 2MB
+#if V8_OS_MACOSX
+    // Default on Mac OS X is 512kB -- bump up to 1MB
+    stack_size = 1 * 1024 * 1024;
+#elif V8_OS_AIX
+    // Default on AIX is 96kB -- bump up to 2MB
     stack_size = 2 * 1024 * 1024;
-  }
 #endif
+  }
   if (stack_size > 0) {
     result = pthread_attr_setstacksize(&attr, stack_size);
     DCHECK_EQ(0, result);
   }
-#endif
   {
     LockGuard<Mutex> lock_guard(&data_->thread_creation_mutex_);
     result = pthread_create(&data_->thread_, &attr, ThreadEntry, this);

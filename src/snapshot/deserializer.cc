@@ -4,13 +4,18 @@
 
 #include "src/snapshot/deserializer.h"
 
+#include "src/api.h"
+#include "src/assembler-inl.h"
 #include "src/bootstrapper.h"
+#include "src/deoptimizer.h"
 #include "src/external-reference-table.h"
-#include "src/heap/heap.h"
+#include "src/heap/heap-inl.h"
 #include "src/isolate.h"
 #include "src/macro-assembler.h"
+#include "src/objects-inl.h"
 #include "src/snapshot/natives.h"
 #include "src/v8.h"
+#include "src/v8threads.h"
 
 namespace v8 {
 namespace internal {
@@ -37,9 +42,12 @@ void Deserializer::FlushICacheForNewIsolate() {
   }
 }
 
-void Deserializer::FlushICacheForNewCodeObjects() {
+void Deserializer::FlushICacheForNewCodeObjectsAndRecordEmbeddedObjects() {
   DCHECK(deserializing_user_code_);
   for (Code* code : new_code_objects_) {
+    // Record all references to embedded objects in the new code object.
+    isolate_->heap()->RecordWritesIntoCode(code);
+
     if (FLAG_serialize_age_code) code->PreAge(isolate_);
     Assembler::FlushICache(isolate_, code->instruction_start(),
                            code->instruction_size());
@@ -52,7 +60,9 @@ bool Deserializer::ReserveSpace() {
     CHECK(reservations_[i].length() > 0);
   }
 #endif  // DEBUG
-  if (!isolate_->heap()->ReserveSpace(reservations_)) return false;
+  DCHECK(allocated_maps_.is_empty());
+  if (!isolate_->heap()->ReserveSpace(reservations_, &allocated_maps_))
+    return false;
   for (int i = 0; i < kNumberOfPreallocatedSpaces; i++) {
     high_water_[i] = reservations_[i][0].start;
   }
@@ -67,6 +77,10 @@ void Deserializer::Initialize(Isolate* isolate) {
   external_reference_table_ = ExternalReferenceTable::instance(isolate);
   CHECK_EQ(magic_number_,
            SerializedData::ComputeMagicNumber(external_reference_table_));
+  // The current isolate must have at least as many API-provided external
+  // references as the to-be-deserialized snapshot expects and refers to.
+  CHECK_LE(num_extra_references_,
+           SerializedData::GetExtraReferences(external_reference_table_));
 }
 
 void Deserializer::Deserialize(Isolate* isolate) {
@@ -88,16 +102,20 @@ void Deserializer::Deserialize(Isolate* isolate) {
     isolate_->heap()->IterateWeakRoots(this, VISIT_ALL);
     DeserializeDeferredObjects();
     FlushICacheForNewIsolate();
+    RestoreExternalReferenceRedirectors(&accessor_infos_);
   }
 
   isolate_->heap()->set_native_contexts_list(
       isolate_->heap()->undefined_value());
   // The allocation site list is build during root iteration, but if no sites
   // were encountered then it needs to be initialized to undefined.
-  if (isolate_->heap()->allocation_sites_list() == Smi::FromInt(0)) {
+  if (isolate_->heap()->allocation_sites_list() == Smi::kZero) {
     isolate_->heap()->set_allocation_sites_list(
         isolate_->heap()->undefined_value());
   }
+
+  // If needed, print the dissassembly of deserialized code objects.
+  PrintDisassembledCodeObjects();
 
   // Issue code events for newly deserialized code objects.
   LOG_CODE_EVENT(isolate_, LogCodeObjects());
@@ -106,7 +124,8 @@ void Deserializer::Deserialize(Isolate* isolate) {
 }
 
 MaybeHandle<Object> Deserializer::DeserializePartial(
-    Isolate* isolate, Handle<JSGlobalProxy> global_proxy) {
+    Isolate* isolate, Handle<JSGlobalProxy> global_proxy,
+    v8::DeserializeEmbedderFieldsCallback embedder_fields_deserializer) {
   Initialize(isolate);
   if (!ReserveSpace()) {
     V8::FatalProcessOutOfMemory("deserialize context");
@@ -123,6 +142,7 @@ MaybeHandle<Object> Deserializer::DeserializePartial(
   Object* root;
   VisitPointer(&root);
   DeserializeDeferredObjects();
+  DeserializeEmbedderFields(embedder_fields_deserializer);
 
   isolate->heap()->RegisterReservationsForBlackAllocation(reservations_);
 
@@ -133,22 +153,21 @@ MaybeHandle<Object> Deserializer::DeserializePartial(
   return Handle<Object>(root, isolate);
 }
 
-MaybeHandle<SharedFunctionInfo> Deserializer::DeserializeCode(
-    Isolate* isolate) {
+MaybeHandle<HeapObject> Deserializer::DeserializeObject(Isolate* isolate) {
   Initialize(isolate);
   if (!ReserveSpace()) {
-    return Handle<SharedFunctionInfo>();
+    return MaybeHandle<HeapObject>();
   } else {
     deserializing_user_code_ = true;
     HandleScope scope(isolate);
-    Handle<SharedFunctionInfo> result;
+    Handle<HeapObject> result;
     {
       DisallowHeapAllocation no_gc;
       Object* root;
       VisitPointer(&root);
       DeserializeDeferredObjects();
-      FlushICacheForNewCodeObjects();
-      result = Handle<SharedFunctionInfo>(SharedFunctionInfo::cast(root));
+      FlushICacheForNewCodeObjectsAndRecordEmbeddedObjects();
+      result = Handle<HeapObject>(HeapObject::cast(root));
       isolate->heap()->RegisterReservationsForBlackAllocation(reservations_);
     }
     CommitPostProcessedObjects(isolate);
@@ -157,8 +176,18 @@ MaybeHandle<SharedFunctionInfo> Deserializer::DeserializeCode(
 }
 
 Deserializer::~Deserializer() {
-  // TODO(svenpanne) Re-enable this assertion when v8 initialization is fixed.
-  // DCHECK(source_.AtEOF());
+#ifdef DEBUG
+  // Do not perform checks if we aborted deserialization.
+  if (source_.position() == 0) return;
+  // Check that we only have padding bytes remaining.
+  while (source_.HasMore()) CHECK_EQ(kNop, source_.Get());
+  for (int space = 0; space < kNumberOfPreallocatedSpaces; space++) {
+    int chunk_index = current_chunk_[space];
+    CHECK_EQ(reservations_[space].length(), chunk_index + 1);
+    CHECK_EQ(reservations_[space][chunk_index].end, high_water_[space]);
+  }
+  CHECK_EQ(allocated_maps_.length(), next_map_index_);
+#endif  // DEBUG
 }
 
 // This is called on the roots.  It is the driver of the deserialization
@@ -198,6 +227,51 @@ void Deserializer::DeserializeDeferredObjects() {
       }
     }
   }
+}
+
+void Deserializer::DeserializeEmbedderFields(
+    v8::DeserializeEmbedderFieldsCallback embedder_fields_deserializer) {
+  if (!source_.HasMore() || source_.Get() != kEmbedderFieldsData) return;
+  DisallowHeapAllocation no_gc;
+  DisallowJavascriptExecution no_js(isolate_);
+  DisallowCompilation no_compile(isolate_);
+  DCHECK_NOT_NULL(embedder_fields_deserializer.callback);
+  for (int code = source_.Get(); code != kSynchronize; code = source_.Get()) {
+    HandleScope scope(isolate_);
+    int space = code & kSpaceMask;
+    DCHECK(space <= kNumberOfSpaces);
+    DCHECK(code - space == kNewObject);
+    Handle<JSObject> obj(JSObject::cast(GetBackReferencedObject(space)),
+                         isolate_);
+    int index = source_.GetInt();
+    int size = source_.GetInt();
+    byte* data = new byte[size];
+    source_.CopyRaw(data, size);
+    embedder_fields_deserializer.callback(v8::Utils::ToLocal(obj), index,
+                                          {reinterpret_cast<char*>(data), size},
+                                          embedder_fields_deserializer.data);
+    delete[] data;
+  }
+}
+
+void Deserializer::PrintDisassembledCodeObjects() {
+#ifdef ENABLE_DISASSEMBLER
+  if (FLAG_print_builtin_code) {
+    Heap* heap = isolate_->heap();
+    HeapIterator iterator(heap);
+    DisallowHeapAllocation no_gc;
+
+    CodeTracer::Scope tracing_scope(isolate_->GetCodeTracer());
+    OFStream os(tracing_scope.file());
+
+    for (HeapObject* obj = iterator.next(); obj != NULL;
+         obj = iterator.next()) {
+      if (obj->IsCode()) {
+        Code::cast(obj)->Disassemble(nullptr, os);
+      }
+    }
+  }
+#endif
 }
 
 // Used to insert a deserialized internalized string into the string table.
@@ -265,7 +339,7 @@ HeapObject* Deserializer::PostProcessNewObject(HeapObject* obj, int space) {
     // TODO(mvstanton): consider treating the heap()->allocation_sites_list()
     // as a (weak) root. If this root is relocated correctly, this becomes
     // unnecessary.
-    if (isolate_->heap()->allocation_sites_list() == Smi::FromInt(0)) {
+    if (isolate_->heap()->allocation_sites_list() == Smi::kZero) {
       site->set_weak_next(isolate_->heap()->undefined_value());
     } else {
       site->set_weak_next(isolate_->heap()->allocation_sites_list());
@@ -278,6 +352,18 @@ HeapObject* Deserializer::PostProcessNewObject(HeapObject* obj, int space) {
     if (deserializing_user_code() || space == LO_SPACE) {
       new_code_objects_.Add(Code::cast(obj));
     }
+  } else if (obj->IsAccessorInfo()) {
+    if (isolate_->external_reference_redirector()) {
+      accessor_infos_.Add(AccessorInfo::cast(obj));
+    }
+  } else if (obj->IsExternalOneByteString()) {
+    DCHECK(obj->map() == isolate_->heap()->native_source_string_map());
+    ExternalOneByteString* string = ExternalOneByteString::cast(obj);
+    DCHECK(string->is_short());
+    string->set_resource(
+        NativesExternalStringResource::DecodeForDeserialization(
+            string->resource()));
+    isolate_->heap()->RegisterExternalString(string);
   }
   // Check alignment.
   DCHECK_EQ(0, Heap::GetFillToAlign(obj->address(), obj->RequiredAlignment()));
@@ -309,9 +395,12 @@ HeapObject* Deserializer::GetBackReferencedObject(int space) {
   SerializerReference back_reference =
       SerializerReference::FromBitfield(source_.GetInt());
   if (space == LO_SPACE) {
-    CHECK(back_reference.chunk_index() == 0);
     uint32_t index = back_reference.large_object_index();
     obj = deserialized_large_objects_[index];
+  } else if (space == MAP_SPACE) {
+    int index = back_reference.map_index();
+    DCHECK(index < next_map_index_);
+    obj = HeapObject::FromAddress(allocated_maps_[index]);
   } else {
     DCHECK(space < kNumberOfPreallocatedSpaces);
     uint32_t chunk_index = back_reference.chunk_index();
@@ -399,9 +488,12 @@ Address Deserializer::Allocate(int space_index, int size) {
     LargeObjectSpace* lo_space = isolate_->heap()->lo_space();
     Executability exec = static_cast<Executability>(source_.Get());
     AllocationResult result = lo_space->AllocateRaw(size, exec);
-    HeapObject* obj = HeapObject::cast(result.ToObjectChecked());
+    HeapObject* obj = result.ToObjectChecked();
     deserialized_large_objects_.Add(obj);
     return obj->address();
+  } else if (space_index == MAP_SPACE) {
+    DCHECK_EQ(Map::kSize, size);
+    return allocated_maps_[next_map_index_++];
   } else {
     DCHECK(space_index < kNumberOfPreallocatedSpaces);
     Address address = high_water_[space_index];
@@ -416,16 +508,6 @@ Address Deserializer::Allocate(int space_index, int size) {
     if (space_index == CODE_SPACE) SkipList::Update(address, size);
     return address;
   }
-}
-
-Object** Deserializer::CopyInNativesSource(Vector<const char> source_vector,
-                                           Object** current) {
-  DCHECK(!isolate_->heap()->deserialization_complete());
-  NativesExternalStringResource* resource = new NativesExternalStringResource(
-      source_vector.start(), source_vector.length());
-  Object* resource_obj = reinterpret_cast<Object*>(resource);
-  UnalignedCopy(current++, &resource_obj);
-  return current;
 }
 
 bool Deserializer::ReadData(Object** current, Object** limit, int source_space,
@@ -484,7 +566,7 @@ bool Deserializer::ReadData(Object** current, Object** limit, int source_space,
         int skip = source_.GetInt();                                           \
         current = reinterpret_cast<Object**>(                                  \
             reinterpret_cast<Address>(current) + skip);                        \
-        int reference_id = source_.GetInt();                                   \
+        uint32_t reference_id = static_cast<uint32_t>(source_.GetInt());       \
         Address address = external_reference_table_->address(reference_id);    \
         new_object = reinterpret_cast<Object*>(address);                       \
       } else if (where == kAttachedReference) {                                \
@@ -631,6 +713,7 @@ bool Deserializer::ReadData(Object** current, Object** limit, int source_space,
       // the current object.
       SINGLE_CASE(kAttachedReference, kPlain, kStartOfObject, 0)
       SINGLE_CASE(kAttachedReference, kPlain, kInnerPointer, 0)
+      SINGLE_CASE(kAttachedReference, kFromCode, kStartOfObject, 0)
       SINGLE_CASE(kAttachedReference, kFromCode, kInnerPointer, 0)
       // Find a builtin and write a pointer to it to the current object.
       SINGLE_CASE(kBuiltin, kPlain, kStartOfObject, 0)
@@ -645,6 +728,33 @@ bool Deserializer::ReadData(Object** current, Object** limit, int source_space,
         int size = source_.GetInt();
         current = reinterpret_cast<Object**>(
             reinterpret_cast<intptr_t>(current) + size);
+        break;
+      }
+
+      case kDeoptimizerEntryFromCode:
+      case kDeoptimizerEntryPlain: {
+        int skip = source_.GetInt();
+        current = reinterpret_cast<Object**>(
+            reinterpret_cast<intptr_t>(current) + skip);
+        Deoptimizer::BailoutType bailout_type =
+            static_cast<Deoptimizer::BailoutType>(source_.Get());
+        int entry_id = source_.GetInt();
+        HandleScope scope(isolate);
+        Address address = Deoptimizer::GetDeoptimizationEntry(
+            isolate_, entry_id, bailout_type, Deoptimizer::ENSURE_ENTRY_CODE);
+        if (data == kDeoptimizerEntryFromCode) {
+          Address location_of_branch_data = reinterpret_cast<Address>(current);
+          Assembler::deserialization_set_special_target_at(
+              isolate, location_of_branch_data,
+              Code::cast(HeapObject::FromAddress(current_object_address)),
+              address);
+          location_of_branch_data += Assembler::kSpecialTargetSize;
+          current = reinterpret_cast<Object**>(location_of_branch_data);
+        } else {
+          Object* new_object = reinterpret_cast<Object*>(address);
+          UnalignedCopy(current, &new_object);
+          current++;
+        }
         break;
       }
 
@@ -700,16 +810,6 @@ bool Deserializer::ReadData(Object** current, Object** limit, int source_space,
         // If we get here then that indicates that you have a mismatch between
         // the number of GC roots when serializing and deserializing.
         CHECK(false);
-        break;
-
-      case kNativesStringResource:
-        current = CopyInNativesSource(Natives::GetScriptSource(source_.Get()),
-                                      current);
-        break;
-
-      case kExtraNativesStringResource:
-        current = CopyInNativesSource(
-            ExtraNatives::GetScriptSource(source_.Get()), current);
         break;
 
       // Deserialize raw data of variable length.

@@ -6,9 +6,11 @@
 
 #include "src/regexp/arm64/regexp-macro-assembler-arm64.h"
 
+#include "src/arm64/macro-assembler-arm64-inl.h"
 #include "src/code-stubs.h"
 #include "src/log.h"
 #include "src/macro-assembler.h"
+#include "src/objects-inl.h"
 #include "src/regexp/regexp-macro-assembler.h"
 #include "src/regexp/regexp-stack.h"
 #include "src/unicode.h"
@@ -1360,12 +1362,6 @@ void RegExpMacroAssemblerARM64::CheckPosition(int cp_offset,
     __ Cmp(w12, string_start_minus_one());
     BranchOrBacktrack(le, on_outside_input);
   }
-}
-
-
-bool RegExpMacroAssemblerARM64::CanReadUnaligned() {
-  // TODO(pielan): See whether or not we should disable unaligned accesses.
-  return !slow_safe();
 }
 
 

@@ -119,12 +119,9 @@ class LCodeGen: public LCodeGenBase {
 
   XMMRegister double_scratch0() const { return xmm0; }
 
-  void EmitClassOfTest(Label* if_true,
-                       Label* if_false,
-                       Handle<String> class_name,
-                       Register input,
-                       Register temporary,
-                       Register temporary2);
+  void EmitClassOfTest(Label* if_true, Label* if_false,
+                       Handle<String> class_name, Register input,
+                       Register temporary, Register temporary2);
 
   bool HasAllocatedStackSlots() const {
     return chunk()->HasAllocatedStackSlots();
@@ -204,10 +201,10 @@ class LCodeGen: public LCodeGenBase {
   void RegisterEnvironmentForDeoptimization(LEnvironment* environment,
                                             Safepoint::DeoptMode mode);
   void DeoptimizeIf(Condition cc, LInstruction* instr,
-                    Deoptimizer::DeoptReason deopt_reason,
+                    DeoptimizeReason deopt_reason,
                     Deoptimizer::BailoutType bailout_type);
   void DeoptimizeIf(Condition cc, LInstruction* instr,
-                    Deoptimizer::DeoptReason deopt_reason);
+                    DeoptimizeReason deopt_reason);
 
   bool DeoptEveryNTimes() {
     return FLAG_deopt_every_n_times != 0 && !info()->IsStub();
@@ -294,8 +291,6 @@ class LCodeGen: public LCodeGenBase {
 
   template <class T>
   void EmitVectorLoadICRegisters(T* instr);
-  template <class T>
-  void EmitVectorStoreICRegisters(T* instr);
 
   void EmitReturn(LReturn* instr);
 

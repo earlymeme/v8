@@ -142,12 +142,9 @@ class LCodeGen: public LCodeGenBase {
 
   LInstruction* GetNextInstruction();
 
-  void EmitClassOfTest(Label* if_true,
-                       Label* if_false,
-                       Handle<String> class_name,
-                       Register input,
-                       Register temporary,
-                       Register temporary2);
+  void EmitClassOfTest(Label* if_true, Label* if_false,
+                       Handle<String> class_name, Register input,
+                       Register temporary, Register temporary2);
 
   bool HasAllocatedStackSlots() const {
     return chunk()->HasAllocatedStackSlots();
@@ -231,10 +228,10 @@ class LCodeGen: public LCodeGenBase {
   void RegisterEnvironmentForDeoptimization(LEnvironment* environment,
                                             Safepoint::DeoptMode mode);
   void DeoptimizeIf(Condition condition, LInstruction* instr,
-                    Deoptimizer::DeoptReason deopt_reason,
+                    DeoptimizeReason deopt_reason,
                     Deoptimizer::BailoutType bailout_type);
   void DeoptimizeIf(Condition condition, LInstruction* instr,
-                    Deoptimizer::DeoptReason deopt_reason);
+                    DeoptimizeReason deopt_reason);
 
   void AddToTranslation(LEnvironment* environment,
                         Translation* translation,
@@ -311,8 +308,6 @@ class LCodeGen: public LCodeGenBase {
 
   template <class T>
   void EmitVectorLoadICRegisters(T* instr);
-  template <class T>
-  void EmitVectorStoreICRegisters(T* instr);
 
   ZoneList<Deoptimizer::JumpTableEntry> jump_table_;
   Scope* const scope_;
