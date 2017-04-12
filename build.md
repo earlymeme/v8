@@ -1,4 +1,5 @@
 ### Build
+
 ```
 tools/dev/v8gen.py x64.debug -- v8_enable_object_print=true v8_enable_gdbjit=true v8_enable_trace_maps=true v8_enable_verify_heap=true
 
@@ -7,8 +8,8 @@ ninja -C out.gn/x64.debug
 ```
 
 ### Debug
-```
 
+```
 out.gn/x64.debug/d8 --trace-opt --trace-deopt --allow-natives-syntax demo/test11.js
 
 gdb --args out.gn/x64.debug/d8 --ignition --trace-ignition --trace --trace-opt-verbose --trace-deopt --log --log-colour --trace-maps --allow-natives-syntax --print-ast --print-bytecode  --enable-inspector demo/test3.js
