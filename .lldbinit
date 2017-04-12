@@ -50,4 +50,5 @@ command regex -h 'Print a v8 LayoutDescriptor object' jld 's/(.+)/expr -- '_v8_i
 # Print TransitionArray.
 command regex -h 'Print a v8 TransitionArray object' jta 's/(.+)/expr -- '_v8_internal_Print_TransitionArray((void*)(%1))/'
 
+# 依赖python-lldb-3.8,lldb-3.8和lldb-3.9的这个包不能同时存在
 command script import ~/lldb_commands.py
