@@ -6,6 +6,9 @@
 1. lldbinit
 2. lldb_commands.py
 
+## 分支
+annotated分支,用于加注解,debug代码
+master分支用于merge from upsteam/master
 
 ---
 
