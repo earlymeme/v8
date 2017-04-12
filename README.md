@@ -1,8 +1,8 @@
-## 如何使用gdb调试v8
+## [如何使用gdb调试v8](https://github.com/earlymeme/v8/issues/2)
 1. gdbinit
 2. gdb-v8-support.py
 
-## 如何使用lldb调试v8
+## [如何使用lldb调试v8](https://github.com/earlymeme/v8/issues/1)
 1. lldbinit
 2. lldb_commands.py
 
