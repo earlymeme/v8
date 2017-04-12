@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <iostream>
+
 #include "src/runtime/runtime-utils.h"
 
 #include "src/allocation-site-scopes.h"
@@ -101,6 +103,10 @@ MUST_USE_RESULT static MaybeHandle<Object> CreateObjectLiteralBoilerplate(
                                 boilerplate->map()->unused_property_fields(),
                                 "FastLiteral");
   }
+  std::cout << __FILE__ << " " << __LINE__ << " boilerplate: " << std::endl;
+  boilerplate->Print();
+  OFStream os(stdout);
+  boilerplate_description->Print();
   return boilerplate;
 }
 

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <iostream>
 
 #include "include/libplatform/libplatform.h"
 #include "include/v8.h"
@@ -40,10 +41,11 @@ int main(int argc, char* argv[]) {
     Local<String> source =
         String::NewFromUtf8(isolate, "'Hello' + ', World!'",
                             NewStringType::kNormal).ToLocalChecked();
+    std::cout << __FILE__ << " Line: " << __LINE__ << " hello world: " << source->Length() << std::endl;
 
     // Compile the source code.
     Local<Script> script = Script::Compile(context, source).ToLocalChecked();
-
+    script->GetUnboundScript();
     // Run the script to get the result.
     Local<Value> result = script->Run(context).ToLocalChecked();
 

@@ -50,7 +50,7 @@ PropertyDetails::PropertyDetails(Smi* smi) {
   value_ = smi->value();
 }
 
-// 转换为Smi
+
 Smi* PropertyDetails::AsSmi() const {
   // Ensure the upper 2 bits have the same value by sign extending it. This is
   // necessary to be able to use the 31st bit of the property details.
@@ -58,7 +58,7 @@ Smi* PropertyDetails::AsSmi() const {
   return Smi::FromInt(value >> 1);
 }
 
-// 字段的宽度,以字为单位
+
 int PropertyDetails::field_width_in_words() const {
   DCHECK(location() == kField);
   if (!FLAG_unbox_double_fields) return 1;
@@ -4680,9 +4680,6 @@ bool Map::is_stable() {
 bool Map::has_code_cache() {
   // Code caches are always fixed arrays. The empty fixed array is used as a
   // sentinel for an absent code cache.
-  /*
-   * 总是固定大小的数组.当没有缓存时,就用空数组
-   * */
   return code_cache()->length() != 0;
 }
 

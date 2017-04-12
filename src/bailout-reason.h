@@ -7,7 +7,7 @@
 
 namespace v8 {
 namespace internal {
-// 这个文件定义了所有导致v8 bailout的原因
+
 // TODO(svenpanne) introduce an AbortReason and partition this list
 #define ERROR_MESSAGES_LIST(V)                                                 \
   V(kNoReason, "no reason")                                                    \

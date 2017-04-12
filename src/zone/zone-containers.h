@@ -20,7 +20,6 @@ namespace internal {
 
 // A wrapper subclass for std::vector to make it easy to construct one
 // that uses a zone allocator.
-// 封装了str::vector的类,使用zone分配器构造,内部实现还是std::vector
 template <typename T>
 class ZoneVector : public std::vector<T, ZoneAllocator<T>> {
  public:
@@ -30,19 +29,16 @@ class ZoneVector : public std::vector<T, ZoneAllocator<T>> {
 
   // Constructs a new vector and fills it with {size} elements, each
   // constructed via the default constructor.
-  // 按size构造
   ZoneVector(size_t size, Zone* zone)
       : std::vector<T, ZoneAllocator<T>>(size, T(), ZoneAllocator<T>(zone)) {}
 
   // Constructs a new vector and fills it with {size} elements, each
   // having the value {def}.
-  // 按def值构造
   ZoneVector(size_t size, T def, Zone* zone)
       : std::vector<T, ZoneAllocator<T>>(size, def, ZoneAllocator<T>(zone)) {}
 
   // Constructs a new vector and fills it with the contents of the range
   // [first, last).
-  // 按照区间构造
   template <class InputIt>
   ZoneVector(InputIt first, InputIt last, Zone* zone)
       : std::vector<T, ZoneAllocator<T>>(first, last, ZoneAllocator<T>(zone)) {}

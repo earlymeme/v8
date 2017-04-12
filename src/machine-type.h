@@ -14,7 +14,7 @@
 
 namespace v8 {
 namespace internal {
-// 机器表示的类型,枚举, 数字表示几位
+
 enum class MachineRepresentation {
   kNone,
   kBit,
@@ -52,7 +52,7 @@ enum class MachineSemantic {
   kNumber,
   kAny
 };
-// 类型
+
 class MachineType {
  public:
   MachineType()

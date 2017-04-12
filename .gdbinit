@@ -123,5 +123,6 @@ Print stack trace with assertion scopes
 Usage: bta
 end
 
-set disassembly-flavor intel
+set disassembly-flavor att
 set disable-randomization off
+source tools/gdb-v8-support.py

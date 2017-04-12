@@ -740,12 +740,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsJSRegExp(Node* object);
 
   // True iff |object| is a Smi or a HeapNumber.
-  // 是一个Smi或者一个HeapNumber
   Node* IsNumber(Node* object);
 
   // True iff |number| is either a Smi, or a HeapNumber whose value is not
   // within Smi range.
-  // 检测是否是一个Smi,或者是一个不再Smi表示区间内的HeapNumber
   Node* IsNumberNormalized(Node* number);
 
   // ElementsKind helpers:
