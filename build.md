@@ -1,4 +1,4 @@
-### Build
+### Build命令
 
 ```
 tools/dev/v8gen.py x64.debug -- v8_enable_object_print=true v8_enable_gdbjit=true v8_enable_trace_maps=true v8_enable_verify_heap=true
