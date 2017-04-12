@@ -30,10 +30,11 @@ gdb --args out.gn/x64.debug/v8_hello_world
 1. gclient sync
 2. ./gs v8/DEPS
 
-- 修改了
-```
-install-sysroot.py
-v8/third_party/binutils/download.py
-v8/tools/clang/scripts/update.py
+> sync fork
+gclient sync 会重写这几个文件,之后runhooks时,会下载失败,需要手动下载,然后修改这几个py文件的main方法,直接return
+>
+> 1. install-sysroot.py
+> 2. v8/third_party/binutils/download.py
+> 3. v8/tools/clang/scripts/update.py
 
-```
+
