@@ -1,3 +1,13 @@
+## Arch
+1. Ignition
+js解释器(改进脚本执行,内存开销,提升网页加载速度)
+2. full codegen
+v8 baseline compiler
+3. crankshaft
+v8 classic optimizing compiler
+4. TurboFan
+
+
 ## [如何使用gdb调试v8](https://github.com/earlymeme/v8/issues/2)
 1. gdbinit
 2. gdb-v8-support.py
