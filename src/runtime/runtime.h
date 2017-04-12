@@ -265,6 +265,7 @@ namespace internal {
   F(InternalDateFormatToParts, 2, 1)         \
   F(CreateNumberFormat, 3, 1)                \
   F(InternalNumberFormat, 2, 1)              \
+  F(CurrencyDigits, 1, 1)                    \
   F(CreateCollator, 3, 1)                    \
   F(InternalCompare, 3, 1)                   \
   F(CreateBreakIterator, 3, 1)               \
@@ -615,6 +616,8 @@ namespace internal {
   F(ValidateWasmOrphanedInstance, 1, 1)       \
   F(SetWasmCompileControls, 2, 1)             \
   F(SetWasmInstantiateControls, 0, 1)         \
+  F(SetWasmCompileFromPromiseOverload, 0, 1)  \
+  F(ResetWasmOverloads, 1, 1)                 \
   F(HeapObjectVerify, 1, 1)                   \
   F(WasmNumInterpretedCalls, 1, 1)            \
   F(RedirectToWasmInterpreter, 2, 1)

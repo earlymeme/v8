@@ -39,8 +39,8 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
   Register reg(0);
   Register other(reg.index() + 1);
   Register wide(128);
-  RegisterList reg_list;
-  RegisterList single(0, 1), pair(0, 2), triple(0, 3);
+  RegisterList reg_list(0, 10);
+  RegisterList empty, single(0, 1), pair(0, 2), triple(0, 3);
 
   // Emit argument creation operations.
   builder.CreateArguments(CreateArgumentsType::kMappedArguments)
@@ -145,16 +145,16 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
   builder.CreateObjectLiteral(0, 0, 0, reg);
 
   // Call operations.
-  builder.Call(reg, reg_list, 1, Call::GLOBAL_CALL)
-      .Call(reg, single, 1, Call::GLOBAL_CALL)
-      .Call(reg, pair, 1, Call::GLOBAL_CALL)
-      .Call(reg, triple, 1, Call::GLOBAL_CALL)
-      .Call(reg, reg_list, 1, Call::NAMED_PROPERTY_CALL,
-            TailCallMode::kDisallow)
-      .Call(reg, single, 1, Call::NAMED_PROPERTY_CALL)
-      .Call(reg, pair, 1, Call::NAMED_PROPERTY_CALL)
-      .Call(reg, triple, 1, Call::NAMED_PROPERTY_CALL)
-      .Call(reg, reg_list, 1, Call::GLOBAL_CALL, TailCallMode::kAllow)
+  builder.CallAnyReceiver(reg, reg_list, 1)
+      .CallProperty(reg, reg_list, 1)
+      .CallProperty(reg, single, 1)
+      .CallProperty(reg, pair, 1)
+      .CallProperty(reg, triple, 1)
+      .CallUndefinedReceiver(reg, reg_list, 1)
+      .CallUndefinedReceiver(reg, empty, 1)
+      .CallUndefinedReceiver(reg, single, 1)
+      .CallUndefinedReceiver(reg, pair, 1)
+      .TailCall(reg, reg_list, 1)
       .CallRuntime(Runtime::kIsArray, reg)
       .CallRuntimeForPair(Runtime::kLoadLookupSlotForCall, reg_list, pair)
       .CallJSRuntime(Context::SPREAD_ITERABLE_INDEX, reg_list)
@@ -219,16 +219,6 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
       .CompareUndetectable()
       .CompareUndefined()
       .CompareNull();
-
-  // Emit peephole optimizations of equality with Null or Undefined.
-  builder.LoadUndefined()
-      .CompareOperation(Token::Value::EQ, reg, 1)
-      .LoadNull()
-      .CompareOperation(Token::Value::EQ, reg, 1)
-      .LoadUndefined()
-      .CompareOperation(Token::Value::EQ_STRICT, reg, 1)
-      .LoadNull()
-      .CompareOperation(Token::Value::EQ_STRICT, reg, 1);
 
   // Emit conversion operator invocations.
   builder.ConvertAccumulatorToNumber(reg, 1)
@@ -418,10 +408,6 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
   // Insert entry for nop bytecode as this often gets optimized out.
   scorecard[Bytecodes::ToByte(Bytecode::kNop)] = 1;
 
-  if (!FLAG_ignition_peephole) {
-    // Insert entries for bytecodes only emitted by peephole optimizer.
-  }
-
   if (!FLAG_type_profile) {
     // Bytecode for CollectTypeProfile is only emitted when
     // Type Information for DevTools is turned on.
@@ -522,12 +508,6 @@ TEST_F(BytecodeArrayBuilderTest, Constants) {
   CHECK_EQ(array->constant_pool()->length(), 3);
 }
 
-static Bytecode PeepholeToBoolean(Bytecode jump_bytecode) {
-  return FLAG_ignition_peephole
-             ? Bytecodes::GetJumpWithoutToBoolean(jump_bytecode)
-             : jump_bytecode;
-}
-
 TEST_F(BytecodeArrayBuilderTest, ForwardJumps) {
   CanonicalHandleScope canonical(isolate());
   static const int kFarJumpDistance = 256 + 20;
@@ -581,16 +561,14 @@ TEST_F(BytecodeArrayBuilderTest, ForwardJumps) {
   // Ignore compare operation.
   iterator.Advance();
 
-  CHECK_EQ(iterator.current_bytecode(),
-           PeepholeToBoolean(Bytecode::kJumpIfToBooleanTrue));
+  CHECK_EQ(iterator.current_bytecode(), Bytecode::kJumpIfTrue);
   CHECK_EQ(iterator.GetUnsignedImmediateOperand(0), 17);
   iterator.Advance();
 
   // Ignore compare operation.
   iterator.Advance();
 
-  CHECK_EQ(iterator.current_bytecode(),
-           PeepholeToBoolean(Bytecode::kJumpIfToBooleanFalse));
+  CHECK_EQ(iterator.current_bytecode(), Bytecode::kJumpIfFalse);
   CHECK_EQ(iterator.GetUnsignedImmediateOperand(0), 12);
   iterator.Advance();
 
@@ -616,8 +594,7 @@ TEST_F(BytecodeArrayBuilderTest, ForwardJumps) {
   // Ignore compare operation.
   iterator.Advance();
 
-  CHECK_EQ(iterator.current_bytecode(),
-           PeepholeToBoolean(Bytecode::kJumpIfToBooleanTrueConstant));
+  CHECK_EQ(iterator.current_bytecode(), Bytecode::kJumpIfTrueConstant);
   CHECK_EQ(*iterator.GetConstantForIndexOperand(0),
            Smi::FromInt(kFarJumpDistance - 5));
   iterator.Advance();
@@ -625,8 +602,7 @@ TEST_F(BytecodeArrayBuilderTest, ForwardJumps) {
   // Ignore compare operation.
   iterator.Advance();
 
-  CHECK_EQ(iterator.current_bytecode(),
-           PeepholeToBoolean(Bytecode::kJumpIfToBooleanFalseConstant));
+  CHECK_EQ(iterator.current_bytecode(), Bytecode::kJumpIfFalseConstant);
   CHECK_EQ(*iterator.GetConstantForIndexOperand(0),
            Smi::FromInt(kFarJumpDistance - 10));
   iterator.Advance();

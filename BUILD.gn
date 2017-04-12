@@ -72,6 +72,9 @@ declare_args() {
   # Sets -dV8_ENABLE_CHECKS.
   v8_enable_v8_checks = ""
 
+  # Builds the snapshot with --trace-ignition
+  v8_trace_ignition = false
+
   # With post mortem support enabled, metadata is embedded into libv8 that
   # describes various parameters of the VM for use by debuggers. See
   # tools/gen-postmortem-metadata.py for details.
@@ -730,6 +733,10 @@ action("run_mksnapshot") {
       "--v8_os_page_size",
       v8_os_page_size,
     ]
+  }
+
+  if (v8_trace_ignition) {
+    args += [ "--trace-ignition" ]
   }
 
   if (v8_use_external_startup_data) {
@@ -1620,8 +1627,6 @@ v8_source_set("v8_base") {
     "src/interpreter/bytecode-array-random-iterator.h",
     "src/interpreter/bytecode-array-writer.cc",
     "src/interpreter/bytecode-array-writer.h",
-    "src/interpreter/bytecode-dead-code-optimizer.cc",
-    "src/interpreter/bytecode-dead-code-optimizer.h",
     "src/interpreter/bytecode-decoder.cc",
     "src/interpreter/bytecode-decoder.h",
     "src/interpreter/bytecode-flags.cc",

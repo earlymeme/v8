@@ -254,6 +254,11 @@ HARMONY_STAGED(FLAG_STAGED_FEATURES)
 HARMONY_SHIPPING(FLAG_SHIPPING_FEATURES)
 #undef FLAG_SHIPPING_FEATURES
 
+#ifdef V8_I18N_SUPPORT
+DEFINE_BOOL(icu_timezone_data, false,
+            "get information about timezones from ICU")
+#endif
+
 #ifdef V8_ENABLE_FUTURE
 #define FUTURE_BOOL true
 #else
@@ -309,8 +314,6 @@ DEFINE_BOOL(string_slices, true, "use string slices")
 
 // Flags for Ignition.
 DEFINE_BOOL(ignition, false, "use ignition interpreter")
-DEFINE_BOOL(ignition_deadcode, true,
-            "use ignition dead code elimination optimizer")
 DEFINE_BOOL(ignition_osr, true, "enable support for OSR from ignition code")
 DEFINE_BOOL(ignition_elide_noneffectful_bytecodes, true,
             "elide bytecodes which won't have any external effect")

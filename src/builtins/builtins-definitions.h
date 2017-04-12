@@ -133,15 +133,17 @@ namespace internal {
                                                                                \
   /* Interpreter */                                                            \
   ASM(InterpreterEntryTrampoline)                                              \
-  ASM(InterpreterPushArgsAndCall)                                              \
-  ASM(InterpreterPushArgsAndCallFunction)                                      \
-  ASM(InterpreterPushArgsAndCallWithFinalSpread)                               \
-  ASM(InterpreterPushArgsAndTailCall)                                          \
-  ASM(InterpreterPushArgsAndTailCallFunction)                                  \
-  ASM(InterpreterPushArgsAndConstruct)                                         \
-  ASM(InterpreterPushArgsAndConstructFunction)                                 \
-  ASM(InterpreterPushArgsAndConstructArray)                                    \
-  ASM(InterpreterPushArgsAndConstructWithFinalSpread)                          \
+  ASM(InterpreterPushArgsThenCall)                                             \
+  ASM(InterpreterPushUndefinedAndArgsThenCall)                                 \
+  ASM(InterpreterPushArgsThenCallFunction)                                     \
+  ASM(InterpreterPushUndefinedAndArgsThenCallFunction)                         \
+  ASM(InterpreterPushArgsThenCallWithFinalSpread)                              \
+  ASM(InterpreterPushArgsThenTailCall)                                         \
+  ASM(InterpreterPushArgsThenTailCallFunction)                                 \
+  ASM(InterpreterPushArgsThenConstruct)                                        \
+  ASM(InterpreterPushArgsThenConstructFunction)                                \
+  ASM(InterpreterPushArgsThenConstructArray)                                   \
+  ASM(InterpreterPushArgsThenConstructWithFinalSpread)                         \
   ASM(InterpreterEnterBytecodeAdvance)                                         \
   ASM(InterpreterEnterBytecodeDispatch)                                        \
   ASM(InterpreterOnStackReplacement)                                           \
@@ -906,6 +908,10 @@ namespace internal {
   TFJ(TypedArrayPrototypeEvery, 2, kCallbackFn, kThisArg)                      \
   /* ES6 %TypedArray%.prototype.some */                                        \
   TFJ(TypedArrayPrototypeSome, 2, kCallbackFn, kThisArg)                       \
+  /* ES6 %TypedArray%.prototype.reduce */                                      \
+  TFJ(TypedArrayPrototypeReduce, 2, kCallbackFn, kInitialValue)                \
+  /* ES6 %TypedArray%.prototype.reduceRight */                                 \
+  TFJ(TypedArrayPrototypeReduceRight, 2, kCallbackFn, kInitialValue)           \
                                                                                \
   /* Wasm */                                                                   \
   ASM(WasmCompileLazy)                                                         \
