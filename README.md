@@ -10,6 +10,10 @@
 annotated分支,用于加注解,debug代码
 master分支用于merge from upsteam/master
 
+如何update fork
+1. https://help.github.com/articles/syncing-a-fork/
+2. https://help.github.com/articles/merging-an-upstream-repository-into-your-fork/
+
 ---
 
 forked from https://github.com/v8/v8
