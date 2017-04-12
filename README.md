@@ -17,7 +17,8 @@ v8 classic optimizing compiler
 2. lldb_commands.py
 
 ## 分支
-annotated分支,用于加注解,debug代码
+新建了annotated分支,用于加注解,debug代码
+
 master分支用于merge from upsteam/master
 
 如何update fork
