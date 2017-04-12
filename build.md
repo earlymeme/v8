@@ -10,7 +10,7 @@ ninja -C out.gn/x64.debug
 ### Debug
 
 ```
-out.gn/x64.debug/d8 --trace-opt --trace-deopt --allow-natives-syntax demo/test11.js
+out.gn/x64.debug/d8 --trace-opt --trace-deopt --print-bytecode --allow-natives-syntax demo/test11.js
 
 gdb --args out.gn/x64.debug/d8 --ignition --trace-ignition --trace --trace-opt-verbose --trace-deopt --log --log-colour --trace-maps --allow-natives-syntax --print-ast --print-bytecode  --enable-inspector demo/test3.js
 
