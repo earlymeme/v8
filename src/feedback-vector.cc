@@ -83,7 +83,7 @@ Handle<FeedbackMetadata> FeedbackMetadata::New(Isolate* isolate,
   for (int i = 0; i < slot_kinds_length; i++) {
     array->set(kReservedIndexCount + i, Smi::kZero);
   }
-
+  // 类型cast,FixedArray => FeedbackMetadata
   Handle<FeedbackMetadata> metadata = Handle<FeedbackMetadata>::cast(array);
 
   for (int i = 0; i < slot_count; i++) {

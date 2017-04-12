@@ -126,7 +126,7 @@ class Handle final : public HandleBase {
   template <typename S>
   static const Handle<T> cast(Handle<S> that) {
     T::cast(*reinterpret_cast<T**>(that.location_));
-    return Handle<T>(reinterpret_cast<T**>(that.location_));
+    return Handle<T>(reinterpret_cast<T**>(that.location_)); // 调用T类型的静态方法cast
   }
 
   // TODO(yangguo): Values that contain empty handles should be declared as
