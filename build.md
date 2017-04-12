@@ -17,8 +17,11 @@ out.gn/x64.debug/d8  --trace --trace-opt-verbose --trace-deopt --allow-natives-s
 
 out.gn/x64.debug/d8 --print-opt-code --print-code-verbose --allow-natives-syntax --code-comments  demo/test7.js
 
+// debug 单个c++测试用例
 gdb --args out.gn/x64.debug/cctest test-func-name-inference/GlobalProperty
 
+// debug 单个测试用例
+// 如果想要测试源码里某段代码关联的测试用例,可以使用 UNREACHABLE() 宏
 tools/run-tests.py --gn -m debug debugger/debug/debug-stepout-scope-part3
 
 gdb --args out.gn/x64.debug/v8_hello_world
