@@ -36,6 +36,11 @@ class InterpreterCallable {
   virtual ~InterpreterCallable() {}
 
   MaybeHandle<Object> operator()(A... args) {
+    printf("InterpreterCallable\n");
+    function_->Print();
+    function_->PrintName();
+    function_->next_function_link();
+    printf("\nInterpreterCallable\n");
     return CallInterpreter(isolate_, function_, args...);
   }
 

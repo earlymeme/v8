@@ -112,6 +112,7 @@ void Zone::DeleteAll() {
 
 // Creates a new segment, sets it size, and pushes it to the front
 // of the segment chain. Returns the new segment.
+// 创建一个新段,设置size,并把这个新创建的段放在段链的头部,返回这个新段
 Segment* Zone::NewSegment(size_t requested_size) {
   Segment* result = allocator_->GetSegment(requested_size);
   if (result != nullptr) {

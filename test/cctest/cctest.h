@@ -589,6 +589,7 @@ class HandleAndZoneScope : public InitializedHandleScope {
   ~HandleAndZoneScope();
 
   // Prefixing the below with main_ reduces a lot of naming clashes.
+  // 加前缀main_,减少命名冲突
   i::Zone* main_zone() { return main_zone_.get(); }
 
  private:

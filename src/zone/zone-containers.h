@@ -20,25 +20,30 @@ namespace internal {
 
 // A wrapper subclass for std::vector to make it easy to construct one
 // that uses a zone allocator.
+// 封装下std::vector
 template <typename T>
 class ZoneVector : public std::vector<T, ZoneAllocator<T>> {
  public:
   // Constructs an empty vector.
+  // 空的容器
   explicit ZoneVector(Zone* zone)
       : std::vector<T, ZoneAllocator<T>>(ZoneAllocator<T>(zone)) {}
 
   // Constructs a new vector and fills it with {size} elements, each
   // constructed via the default constructor.
+  // 构造size长度的zoneVector
   ZoneVector(size_t size, Zone* zone)
       : std::vector<T, ZoneAllocator<T>>(size, T(), ZoneAllocator<T>(zone)) {}
 
   // Constructs a new vector and fills it with {size} elements, each
   // having the value {def}.
+  // 使用size构造,def值
   ZoneVector(size_t size, T def, Zone* zone)
       : std::vector<T, ZoneAllocator<T>>(size, def, ZoneAllocator<T>(zone)) {}
 
   // Constructs a new vector and fills it with the contents of the range
   // [first, last).
+  // 构造vector,使用[first, last)区间内的内容填充
   template <class InputIt>
   ZoneVector(InputIt first, InputIt last, Zone* zone)
       : std::vector<T, ZoneAllocator<T>>(first, last, ZoneAllocator<T>(zone)) {}
@@ -59,6 +64,7 @@ class ZoneDeque : public std::deque<T, RecyclingZoneAllocator<T>> {
 // that uses a zone allocator.
 // TODO(mstarzinger): This should be renamed to ZoneList once we got rid of our
 // own home-grown ZoneList that actually is a ZoneVector.
+// 链表实现
 template <typename T>
 class ZoneLinkedList : public std::list<T, ZoneAllocator<T>> {
  public:

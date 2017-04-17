@@ -67,6 +67,7 @@ def bta(debugger, *args):
           color, prefix, match.group(2), match.group(1)))
 
 def __lldb_init_module (debugger, dict):
+  print "loaded lldb python"
   debugger.HandleCommand('command script add -f lldb_commands.jst jst')
   debugger.HandleCommand('command script add -f lldb_commands.jss jss')
   debugger.HandleCommand('command script add -f lldb_commands.bta bta')

@@ -178,6 +178,7 @@ struct MaybeBoolFlag {
 //
 // Flags in all modes.
 //
+// v8 command参数
 #define FLAG FLAG_FULL
 
 DEFINE_BOOL(experimental_extras, false,
