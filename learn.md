@@ -33,3 +33,13 @@ Handle<SharedFunctionInfo> CompileToplevel(CompilationInfo* info) {
 
 ```
 
+```interpreter.cc InterpreterCompilationJob::PrepareJobImpl
+if (print_bytecode_) {
+    OFStream os(stdout);
+    std::unique_ptr<char[]> name = info()->GetDebugName();
+    os << "[generating bytecode for function: " << info()->GetDebugName().get()
+       << "]" << std::endl
+       << std::flush;
+  }
+```
+
