@@ -4,4 +4,4 @@ function Person(name, age, age1) {
   this.age1 = age1;
 }
 
-const p = new Person("Daniel", 41);
+const p = new Person("Daniel", 41, 82);

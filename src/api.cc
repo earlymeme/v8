@@ -2017,6 +2017,9 @@ MaybeLocal<Value> Script::Run(Local<Context> context) {
   i::AggregatingHistogramTimerScope timer(isolate->counters()->compile_lazy());
   i::TimerEventScope<i::TimerEventExecute> timer_scope(isolate);
   auto fun = i::Handle<i::JSFunction>::cast(Utils::OpenHandle(this));
+  printf("Script::Run:\n");
+  fun->Print();
+  printf("Script::Run...\n");
 
   i::Handle<i::Object> receiver = isolate->global_proxy();
   Local<Value> result;
