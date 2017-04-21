@@ -58,10 +58,12 @@ Handle<Object> InterpreterTester::NewObject(const char* script) {
 
 Handle<String> InterpreterTester::GetName(Isolate* isolate, const char* name) {
   Handle<String> result = isolate->factory()->NewStringFromAsciiChecked(name);
+  // string_table hashmap实现
   return isolate->factory()->string_table()->LookupString(isolate, result);
 }
 
 std::string InterpreterTester::SourceForBody(const char* body) {
+  // 函数代码体
   return "function " + function_name() + "() {\n" + std::string(body) + "\n}";
 }
 

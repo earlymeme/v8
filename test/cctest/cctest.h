@@ -385,6 +385,7 @@ static inline v8::Local<v8::Script> CompileWithOrigin(const char* source,
 
 
 // Helper functions that compile and run the source.
+// 编译,运行源码
 static inline v8::MaybeLocal<v8::Value> CompileRun(
     v8::Local<v8::Context> context, const char* source) {
   return v8::Script::Compile(context, v8_str(source))

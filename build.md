@@ -25,6 +25,7 @@ gdb --args out.gn/x64.debug/cctest test-interpreter/InterpreterReturn
 // debug 单个测试用例
 // 如果想要测试源码里某段代码关联的测试用例,可以使用 UNREACHABLE() 宏
 tools/run-tests.py --gn -m debug debugger/debug/debug-stepout-scope-part3
+tools/run-tests.py --gn -m debug mjsunit/array-sort
 
 gdb --args out.gn/x64.debug/v8_hello_world
 

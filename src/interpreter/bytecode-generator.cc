@@ -1020,7 +1020,7 @@ void BytecodeGenerator::VisitDeclarations(Declaration::List* declarations) {
   for (Declaration* decl : *declarations) {
     RegisterAllocationScope register_scope(this);
     Visit(decl);
-    printf("decl: \n");
+    printf("BytecodeGenerator::VisitDeclarations decl: \n");
     decl->Print();
   }
   if (globals_builder()->empty()) return;
