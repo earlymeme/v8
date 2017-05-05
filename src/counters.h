@@ -679,6 +679,7 @@ class RuntimeCallTimer final {
   V(UnboundScript_GetName)                                 \
   V(UnboundScript_GetSourceMappingURL)                     \
   V(UnboundScript_GetSourceURL)                            \
+  V(Value_InstanceOf)                                      \
   V(Value_TypeOf)                                          \
   V(ValueDeserializer_ReadHeader)                          \
   V(ValueDeserializer_ReadValue)                           \
@@ -715,6 +716,9 @@ class RuntimeCallTimer final {
   V(FunctionCallback)                               \
   V(GC)                                             \
   V(GC_AllAvailableGarbage)                         \
+  V(GC_IncrementalMarkingJob)                       \
+  V(GC_IncrementalMarkingObserver)                  \
+  V(GC_SlowAllocateRaw)                             \
   V(GCEpilogueCallback)                             \
   V(GCPrologueCallback)                             \
   V(GenericNamedPropertyDefinerCallback)            \
@@ -784,6 +788,7 @@ class RuntimeCallTimer final {
   V(LoadIC_LoadConstantFromPrototypeDH)          \
   V(LoadIC_LoadFieldDH)                          \
   V(LoadIC_LoadFieldFromPrototypeDH)             \
+  V(LoadIC_LoadGlobalDH)                         \
   V(LoadIC_LoadGlobalFromPrototypeDH)            \
   V(LoadIC_LoadIntegerIndexedExoticDH)           \
   V(LoadIC_LoadInterceptorDH)                    \
@@ -1026,7 +1031,6 @@ class RuntimeCallTimerScope {
      V8.WasmCompileFunctionPeakMemoryBytes)                              \
   HM(wasm_asm_min_mem_pages_count, V8.WasmMinMemPagesCount.asm)          \
   HM(wasm_wasm_min_mem_pages_count, V8.WasmMinMemPagesCount.wasm)        \
-  HM(wasm_asm_max_mem_pages_count, V8.WasmMaxMemPagesCount.asm)          \
   HM(wasm_wasm_max_mem_pages_count, V8.WasmMaxMemPagesCount.wasm)        \
   HM(wasm_asm_function_size_bytes, V8.WasmFunctionSizeBytes.asm)         \
   HM(wasm_wasm_function_size_bytes, V8.WasmFunctionSizeBytes.wasm)       \

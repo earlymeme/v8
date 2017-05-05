@@ -810,8 +810,9 @@ void MacroAssembler::ConvertDoubleToUnsignedInt64(
 void MacroAssembler::ShiftLeftPair(Register dst_low, Register dst_high,
                                    Register src_low, Register src_high,
                                    Register scratch, Register shift) {
-  DCHECK(!AreAliased(dst_low, src_high, shift));
-  DCHECK(!AreAliased(dst_high, src_low, shift));
+  DCHECK(!AreAliased(dst_low, src_high));
+  DCHECK(!AreAliased(dst_high, src_low));
+  DCHECK(!AreAliased(dst_low, dst_high, shift));
   Label less_than_32;
   Label done;
   cmpi(shift, Operand(32));
@@ -856,8 +857,9 @@ void MacroAssembler::ShiftLeftPair(Register dst_low, Register dst_high,
 void MacroAssembler::ShiftRightPair(Register dst_low, Register dst_high,
                                     Register src_low, Register src_high,
                                     Register scratch, Register shift) {
-  DCHECK(!AreAliased(dst_low, src_high, shift));
-  DCHECK(!AreAliased(dst_high, src_low, shift));
+  DCHECK(!AreAliased(dst_low, src_high));
+  DCHECK(!AreAliased(dst_high, src_low));
+  DCHECK(!AreAliased(dst_low, dst_high, shift));
   Label less_than_32;
   Label done;
   cmpi(shift, Operand(32));
@@ -2629,7 +2631,7 @@ void MacroAssembler::AssertGeneratorObject(Register object, Register flags) {
   // `flags` should be an untagged integer. See `SuspendFlags` in src/globals.h
   if (!emit_debug_code()) return;
   TestIfSmi(object, r0);
-  Check(ne, kOperandIsASmiAndNotAGeneratorObject);
+  Check(ne, kOperandIsASmiAndNotAGeneratorObject, cr0);
 
   // Load map
   Register map = object;
@@ -2637,9 +2639,8 @@ void MacroAssembler::AssertGeneratorObject(Register object, Register flags) {
   LoadP(map, FieldMemOperand(object, HeapObject::kMapOffset));
 
   Label async, do_check;
-  And(ip, flags, Operand(static_cast<int>(SuspendFlags::kGeneratorTypeMask)));
-  cmpi(ip, Operand(static_cast<int>(SuspendFlags::kGeneratorTypeMask)));
-  bne(&async);
+  TestBitMask(flags, static_cast<int>(SuspendFlags::kGeneratorTypeMask), r0);
+  bne(&async, cr0);
 
   // Check if JSGeneratorObject
   CompareInstanceType(map, object, JS_GENERATOR_OBJECT_TYPE);
@@ -2959,6 +2960,7 @@ void MacroAssembler::CallCFunction(Register function, int num_arguments) {
 void MacroAssembler::CallCFunctionHelper(Register function,
                                          int num_reg_arguments,
                                          int num_double_arguments) {
+  DCHECK_LE(num_reg_arguments + num_double_arguments, kMaxCParameters);
   DCHECK(has_frame());
 
   // Just call directly. The function called cannot cause a GC, or

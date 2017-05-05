@@ -2786,6 +2786,130 @@ void InstructionSelector::VisitS32x4Select(Node* node) {
   VisitRRRR(this, kMips64S32x4Select, node);
 }
 
+void InstructionSelector::VisitF32x4Abs(Node* node) {
+  VisitRR(this, kMips64F32x4Abs, node);
+}
+
+void InstructionSelector::VisitF32x4Neg(Node* node) {
+  VisitRR(this, kMips64F32x4Neg, node);
+}
+
+void InstructionSelector::VisitF32x4RecipApprox(Node* node) {
+  VisitRR(this, kMips64F32x4RecipApprox, node);
+}
+
+void InstructionSelector::VisitF32x4RecipSqrtApprox(Node* node) {
+  VisitRR(this, kMips64F32x4RecipSqrtApprox, node);
+}
+
+void InstructionSelector::VisitF32x4Add(Node* node) {
+  VisitRRR(this, kMips64F32x4Add, node);
+}
+
+void InstructionSelector::VisitF32x4Sub(Node* node) {
+  VisitRRR(this, kMips64F32x4Sub, node);
+}
+
+void InstructionSelector::VisitF32x4Mul(Node* node) {
+  VisitRRR(this, kMips64F32x4Mul, node);
+}
+
+void InstructionSelector::VisitF32x4Max(Node* node) {
+  VisitRRR(this, kMips64F32x4Max, node);
+}
+
+void InstructionSelector::VisitF32x4Min(Node* node) {
+  VisitRRR(this, kMips64F32x4Min, node);
+}
+
+void InstructionSelector::VisitF32x4Eq(Node* node) {
+  VisitRRR(this, kMips64F32x4Eq, node);
+}
+
+void InstructionSelector::VisitF32x4Ne(Node* node) {
+  VisitRRR(this, kMips64F32x4Ne, node);
+}
+
+void InstructionSelector::VisitF32x4Lt(Node* node) {
+  VisitRRR(this, kMips64F32x4Lt, node);
+}
+
+void InstructionSelector::VisitF32x4Le(Node* node) {
+  VisitRRR(this, kMips64F32x4Le, node);
+}
+
+void InstructionSelector::VisitI32x4SConvertF32x4(Node* node) {
+  VisitRR(this, kMips64I32x4SConvertF32x4, node);
+}
+
+void InstructionSelector::VisitI32x4UConvertF32x4(Node* node) {
+  VisitRR(this, kMips64I32x4UConvertF32x4, node);
+}
+
+void InstructionSelector::VisitI32x4Neg(Node* node) {
+  VisitRR(this, kMips64I32x4Neg, node);
+}
+
+void InstructionSelector::VisitI32x4LtS(Node* node) {
+  VisitRRR(this, kMips64I32x4LtS, node);
+}
+
+void InstructionSelector::VisitI32x4LeS(Node* node) {
+  VisitRRR(this, kMips64I32x4LeS, node);
+}
+
+void InstructionSelector::VisitI32x4LtU(Node* node) {
+  VisitRRR(this, kMips64I32x4LtU, node);
+}
+
+void InstructionSelector::VisitI32x4LeU(Node* node) {
+  VisitRRR(this, kMips64I32x4LeU, node);
+}
+
+void InstructionSelector::VisitI16x8Splat(Node* node) {
+  VisitRR(this, kMips64I16x8Splat, node);
+}
+
+void InstructionSelector::VisitI16x8ExtractLane(Node* node) {
+  VisitRRI(this, kMips64I16x8ExtractLane, node);
+}
+
+void InstructionSelector::VisitI16x8ReplaceLane(Node* node) {
+  VisitRRIR(this, kMips64I16x8ReplaceLane, node);
+}
+
+void InstructionSelector::VisitI16x8Neg(Node* node) {
+  VisitRR(this, kMips64I16x8Neg, node);
+}
+
+void InstructionSelector::VisitI16x8Shl(Node* node) {
+  VisitRRI(this, kMips64I16x8Shl, node);
+}
+
+void InstructionSelector::VisitI16x8ShrS(Node* node) {
+  VisitRRI(this, kMips64I16x8ShrS, node);
+}
+
+void InstructionSelector::VisitI16x8ShrU(Node* node) {
+  VisitRRI(this, kMips64I16x8ShrU, node);
+}
+
+void InstructionSelector::VisitI16x8Add(Node* node) {
+  VisitRRR(this, kMips64I16x8Add, node);
+}
+
+void InstructionSelector::VisitI16x8AddSaturateS(Node* node) {
+  VisitRRR(this, kMips64I16x8AddSaturateS, node);
+}
+
+void InstructionSelector::VisitI16x8Sub(Node* node) {
+  VisitRRR(this, kMips64I16x8Sub, node);
+}
+
+void InstructionSelector::VisitI16x8SubSaturateS(Node* node) {
+  VisitRRR(this, kMips64I16x8SubSaturateS, node);
+}
+
 // static
 MachineOperatorBuilder::Flags
 InstructionSelector::SupportedMachineOperatorFlags() {

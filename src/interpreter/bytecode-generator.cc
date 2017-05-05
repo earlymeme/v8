@@ -39,9 +39,15 @@ class BytecodeGenerator::ContextScope BASE_EMBEDDED {
     if (outer_) {
       depth_ = outer_->depth_ + 1;
 
+      int outer_reg_index =
+          builder()->first_context_register().index() + outer_->depth_;
+
+      // TODO(ignition): ensure overwriting of non-context registers with
+      // a Context can never occurs, and re-enable DCHECK.
+      // DCHECK_LE(outer_reg_index, builder()->last_context_register().index());
+
       // Push the outer context into a new context register.
-      Register outer_context_reg(builder()->first_context_register().index() +
-                                 outer_->depth_);
+      Register outer_context_reg(outer_reg_index);
       outer_->set_register(outer_context_reg);
       generator_->builder()->PushContext(outer_context_reg);
     }
@@ -1498,7 +1504,8 @@ void BytecodeGenerator::VisitFunctionLiteral(FunctionLiteral* expr) {
   function_literals_.push_back(std::make_pair(expr, entry));
 }
 
-void BytecodeGenerator::VisitClassLiteral(ClassLiteral* expr) {
+void BytecodeGenerator::BuildClassLiteral(ClassLiteral* expr) {
+  VisitDeclarations(expr->scope()->declarations());
   Register constructor = VisitForRegisterValue(expr->constructor());
   {
     RegisterAllocationScope register_scope(this);
@@ -1532,6 +1539,18 @@ void BytecodeGenerator::VisitClassLiteral(ClassLiteral* expr) {
         expr->NeedsProxySlot() ? expr->ProxySlot() : FeedbackSlot::Invalid();
     BuildVariableAssignment(proxy->var(), Token::INIT, slot,
                             HoleCheckMode::kElided);
+  }
+}
+
+void BytecodeGenerator::VisitClassLiteral(ClassLiteral* expr) {
+  CurrentScope current_scope(this, expr->scope());
+  DCHECK_NOT_NULL(expr->scope());
+  if (expr->scope()->NeedsContext()) {
+    BuildNewLocalBlockContext(expr->scope());
+    ContextScope scope(this, expr->scope());
+    BuildClassLiteral(expr);
+  } else {
+    BuildClassLiteral(expr);
   }
 }
 
@@ -1757,6 +1776,8 @@ void BytecodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
         break;
       }
       case ObjectLiteral::Property::PROTOTYPE: {
+        // __proto__:null is handled by CreateObjectLiteral.
+        if (property->IsNullPrototype()) break;
         DCHECK(property->emit_store());
         RegisterList args = register_allocator()->NewRegisterList(2);
         builder()->MoveRegister(literal, args[0]);
@@ -1806,7 +1827,9 @@ void BytecodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
     ObjectLiteral::Property* property = expr->properties()->at(property_index);
     RegisterAllocationScope inner_register_scope(this);
 
-    if (property->kind() == ObjectLiteral::Property::PROTOTYPE) {
+    if (property->IsPrototype()) {
+      // __proto__:null is handled by CreateObjectLiteral.
+      if (property->IsNullPrototype()) continue;
       DCHECK(property->emit_store());
       RegisterList args = register_allocator()->NewRegisterList(2);
       builder()->MoveRegister(literal, args[0]);
@@ -2105,8 +2128,6 @@ void BytecodeGenerator::BuildThrowReferenceError(const AstRawString* name) {
 }
 
 void BytecodeGenerator::BuildThrowIfHole(Variable* variable) {
-  // TODO(interpreter): Can the parser reduce the number of checks
-  // performed? Or should there be a ThrowIfHole bytecode.
   BytecodeLabel no_reference_error;
   builder()->JumpIfNotHole(&no_reference_error);
 
@@ -2395,18 +2416,16 @@ void BytecodeGenerator::VisitSuspend(Suspend* expr) {
   if (expr->IsNonInitialAsyncGeneratorYield()) {
     // AsyncGenerator yields (with the exception of the initial yield) delegate
     // to AsyncGeneratorResolve(), implemented via the runtime call below.
-    RegisterList args = register_allocator()->NewRegisterList(2);
+    RegisterList args = register_allocator()->NewRegisterList(3);
 
-    int context_index = expr->is_yield_star()
-                            ? Context::ASYNC_GENERATOR_RAW_YIELD
-                            : Context::ASYNC_GENERATOR_YIELD;
-
-    // Async GeneratorYield:
+    // AsyncGeneratorYield:
     // perform AsyncGeneratorResolve(<generator>, <value>, false).
     builder()
         ->MoveRegister(generator, args[0])
         .MoveRegister(value, args[1])
-        .CallJSRuntime(context_index, args);
+        .LoadFalse()
+        .StoreAccumulatorInRegister(args[2])
+        .CallRuntime(Runtime::kInlineAsyncGeneratorResolve, args);
   } else {
     builder()->LoadAccumulatorWithRegister(value);
   }

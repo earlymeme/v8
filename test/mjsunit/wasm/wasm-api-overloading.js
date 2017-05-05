@@ -7,6 +7,7 @@
 load("test/mjsunit/wasm/wasm-constants.js");
 load("test/mjsunit/wasm/wasm-module-builder.js");
 
+%ResetWasmOverloads();
 let buffer = (() => {
   let builder = new WasmModuleBuilder();
   builder.addFunction("f", kSig_i_v)
@@ -16,22 +17,23 @@ let buffer = (() => {
 })();
 
 var module = new WebAssembly.Module(buffer);
-var wrapper = Promise.resolve(module);
+var wrapper = [module];
 
 assertPromiseResult(
   WebAssembly.instantiate(wrapper),
   assertUnreachable,
   e => assertTrue(e instanceof TypeError));
 
-assertPromiseResult((
-  () => {
-    var old = %SetWasmCompileFromPromiseOverload();
-    var ret = WebAssembly.instantiate(wrapper);
-    %ResetWasmOverloads(old);
-    return ret;
+assertPromiseResult(
+  (() => {
+    %SetWasmCompileFromPromiseOverload();
+    return WebAssembly.instantiate(wrapper);
   })(),
   pair => {
+    print(2);
+    var pair = result.pair;
     assertTrue(pair.instance instanceof WebAssembly.Instance);
-    assertTrue(pair.module instanceof WebAssembly.Module)
+    assertTrue(pair.module instanceof WebAssembly.Module);
+    %ResetWasmOverloads();
   },
   assertUnreachable);

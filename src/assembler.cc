@@ -63,6 +63,7 @@
 #include "src/runtime/runtime.h"
 #include "src/simulator.h"  // For flushing instruction cache.
 #include "src/snapshot/serializer-common.h"
+#include "src/string-search.h"
 #include "src/wasm/wasm-external-refs.h"
 
 // Include native regexp-macro-assembler.
@@ -139,11 +140,8 @@ const char* const RelocInfo::kFillerCommentString = "DEOPTIMIZATION PADDING";
 // Implementation of AssemblerBase
 
 AssemblerBase::IsolateData::IsolateData(Isolate* isolate)
-    : serializer_enabled_(isolate->serializer_enabled())
-#if V8_TARGET_ARCH_IA32 || V8_TARGET_ARCH_X64
-      ,
+    : serializer_enabled_(isolate->serializer_enabled()),
       max_old_generation_size_(isolate->heap()->MaxOldGenerationSize())
-#endif
 #if V8_TARGET_ARCH_X64
       ,
       code_range_start_(
@@ -1561,6 +1559,28 @@ void* libc_memset(void* dest, int byte, size_t n) {
 ExternalReference ExternalReference::libc_memset_function(Isolate* isolate) {
   return ExternalReference(Redirect(isolate, FUNCTION_ADDR(libc_memset)));
 }
+
+template <typename SubjectChar, typename PatternChar>
+ExternalReference ExternalReference::search_string_raw(Isolate* isolate) {
+  auto f = SearchStringRaw<SubjectChar, PatternChar>;
+  return ExternalReference(Redirect(isolate, FUNCTION_ADDR(f)));
+}
+
+ExternalReference ExternalReference::try_internalize_string_function(
+    Isolate* isolate) {
+  return ExternalReference(Redirect(
+      isolate, FUNCTION_ADDR(StringTable::LookupStringIfExists_NoAllocate)));
+}
+
+// Explicit instantiations for all combinations of 1- and 2-byte strings.
+template ExternalReference
+ExternalReference::search_string_raw<const uint8_t, const uint8_t>(Isolate*);
+template ExternalReference
+ExternalReference::search_string_raw<const uint8_t, const uc16>(Isolate*);
+template ExternalReference
+ExternalReference::search_string_raw<const uc16, const uint8_t>(Isolate*);
+template ExternalReference
+ExternalReference::search_string_raw<const uc16, const uc16>(Isolate*);
 
 ExternalReference ExternalReference::page_flags(Page* page) {
   return ExternalReference(reinterpret_cast<Address>(page) +

@@ -468,6 +468,18 @@ class RepresentationSelector {
         new_type = op_typer_.ToNumber(FeedbackTypeOf(node->InputAt(0)));
         break;
 
+      case IrOpcode::kCheckFloat64Hole:
+        new_type = Type::Intersect(
+            op_typer_.CheckFloat64Hole(FeedbackTypeOf(node->InputAt(0))),
+            info->restriction_type(), graph_zone());
+        break;
+
+      case IrOpcode::kCheckNumber:
+        new_type = Type::Intersect(
+            op_typer_.CheckNumber(FeedbackTypeOf(node->InputAt(0))),
+            info->restriction_type(), graph_zone());
+        break;
+
       case IrOpcode::kPhi: {
         new_type = TypePhi(node);
         if (type != nullptr) {
@@ -819,6 +831,15 @@ class RepresentationSelector {
     if (lower()) Kill(node);
   }
 
+  // Helper for no-op node.
+  void VisitNoop(Node* node, Truncation truncation) {
+    if (truncation.IsUnused()) return VisitUnused(node);
+    MachineRepresentation representation =
+        GetOutputInfoForPhi(node, TypeOf(node), truncation);
+    VisitUnop(node, UseInfo(representation, truncation), representation);
+    if (lower()) DeferReplacement(node, node->InputAt(0));
+  }
+
   // Helper for binops of the R x L -> O variety.
   void VisitBinop(Node* node, UseInfo left_use, UseInfo right_use,
                   MachineRepresentation output,
@@ -1050,6 +1071,51 @@ class RepresentationSelector {
           node, jsgraph_->common()->TypedStateValues(types, mask));
     }
     SetOutput(node, MachineRepresentation::kTagged);
+  }
+
+  void VisitFrameState(Node* node) {
+    DCHECK_EQ(5, node->op()->ValueInputCount());
+    DCHECK_EQ(1, OperatorProperties::GetFrameStateInputCount(node->op()));
+
+    ProcessInput(node, 0, UseInfo::AnyTagged());  // Parameters.
+    ProcessInput(node, 1, UseInfo::AnyTagged());  // Registers.
+
+    // Expression stack/accumulator.
+    if (node->InputAt(2)->opcode() == IrOpcode::kStateValues ||
+        node->InputAt(2)->opcode() == IrOpcode::kTypedStateValues) {
+      // TODO(turbofan): This should only be produced by AST graph builder.
+      // Remove once we switch to bytecode graph builder exclusively.
+      ProcessInput(node, 2, UseInfo::AnyTagged());
+    } else {
+      // Accumulator is a special flower - we need to remember its type in
+      // a singleton typed-state-values node (as if it was a singleton
+      // state-values node).
+      if (propagate()) {
+        EnqueueInput(node, 2, UseInfo::Any());
+      } else if (lower()) {
+        Zone* zone = jsgraph_->zone();
+        Node* accumulator = node->InputAt(2);
+        if (accumulator == jsgraph_->OptimizedOutConstant()) {
+          node->ReplaceInput(2, jsgraph_->SingleDeadTypedStateValues());
+        } else {
+          ZoneVector<MachineType>* types =
+              new (zone->New(sizeof(ZoneVector<MachineType>)))
+                  ZoneVector<MachineType>(1, zone);
+          (*types)[0] = DeoptMachineTypeOf(
+              GetInfo(accumulator)->representation(), TypeOf(accumulator));
+
+          node->ReplaceInput(2, jsgraph_->graph()->NewNode(
+                                    jsgraph_->common()->TypedStateValues(
+                                        types, SparseInputMask::Dense()),
+                                    accumulator));
+        }
+      }
+    }
+
+    ProcessInput(node, 3, UseInfo::AnyTagged());  // Context.
+    ProcessInput(node, 4, UseInfo::AnyTagged());  // Closure.
+    ProcessInput(node, 5, UseInfo::AnyTagged());  // Outer frame state.
+    return SetOutput(node, MachineRepresentation::kTagged);
   }
 
   void VisitObjectState(Node* node) {
@@ -1381,30 +1447,6 @@ class RepresentationSelector {
     return;
   }
 
-  void VisitOsrGuard(Node* node) {
-    VisitInputs(node);
-
-    // Insert a dynamic check for the OSR value type if necessary.
-    switch (OsrGuardTypeOf(node->op())) {
-      case OsrGuardType::kUninitialized:
-        // At this point, we should always have a type for the OsrValue.
-        UNREACHABLE();
-        break;
-      case OsrGuardType::kSignedSmall:
-        if (lower()) {
-          NodeProperties::ChangeOp(node,
-                                   simplified()->CheckedTaggedToTaggedSigned());
-        }
-        return SetOutput(node, MachineRepresentation::kTaggedSigned);
-      case OsrGuardType::kAny:  // Nothing to check.
-        if (lower()) {
-          DeferReplacement(node, node->InputAt(0));
-        }
-        return SetOutput(node, MachineRepresentation::kTagged);
-    }
-    UNREACHABLE();
-  }
-
   // Dispatching routine for visiting the node {node} with the usage {use}.
   // Depending on the operator, propagate new usage info to the inputs.
   void VisitNode(Node* node, Truncation truncation,
@@ -1510,11 +1552,14 @@ class RepresentationSelector {
             // BooleanNot(x: kRepBit) => Word32Equal(x, #0)
             node->AppendInput(jsgraph_->zone(), jsgraph_->Int32Constant(0));
             NodeProperties::ChangeOp(node, lowering->machine()->Word32Equal());
-          } else {
-            DCHECK(CanBeTaggedPointer(input_info->representation()));
+          } else if (CanBeTaggedPointer(input_info->representation())) {
             // BooleanNot(x: kRepTagged) => WordEqual(x, #false)
             node->AppendInput(jsgraph_->zone(), jsgraph_->FalseConstant());
             NodeProperties::ChangeOp(node, lowering->machine()->WordEqual());
+          } else {
+            DCHECK_EQ(MachineRepresentation::kNone,
+                      input_info->representation());
+            DeferReplacement(node, lowering->jsgraph()->Int32Constant(0));
           }
         } else {
           // No input representation requirement; adapt during lowering.
@@ -2356,19 +2401,9 @@ class RepresentationSelector {
         return;
       }
       case IrOpcode::kCheckNumber: {
-        if (InputIs(node, Type::Number())) {
-          if (truncation.IsUsedAsWord32()) {
-            VisitUnop(node, UseInfo::TruncatingWord32(),
-                      MachineRepresentation::kWord32);
-          } else {
-            // TODO(jarin,bmeurer): We need to go to Tagged here, because
-            // otherwise we cannot distinguish the hole NaN (which might need to
-            // be treated as undefined). We should have a dedicated Type for
-            // that at some point, and maybe even a dedicated truncation.
-            VisitUnop(node, UseInfo::AnyTagged(),
-                      MachineRepresentation::kTagged);
-          }
-          if (lower()) DeferReplacement(node, node->InputAt(0));
+        Type* const input_type = TypeOf(node->InputAt(0));
+        if (input_type->Is(Type::Number())) {
+          VisitNoop(node, truncation);
         } else {
           VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kTagged);
         }
@@ -2681,13 +2716,32 @@ class RepresentationSelector {
         return;
       }
       case IrOpcode::kCheckFloat64Hole: {
-        CheckFloat64HoleMode mode = CheckFloat64HoleModeOf(node->op());
-        ProcessInput(node, 0, UseInfo::TruncatingFloat64());
-        ProcessRemainingInputs(node, 1);
-        SetOutput(node, MachineRepresentation::kFloat64);
-        if (truncation.IsUsedAsFloat64() &&
-            mode == CheckFloat64HoleMode::kAllowReturnHole) {
-          if (lower()) DeferReplacement(node, node->InputAt(0));
+        Type* const input_type = TypeOf(node->InputAt(0));
+        if (input_type->Is(Type::Number())) {
+          VisitNoop(node, truncation);
+        } else {
+          CheckFloat64HoleMode mode = CheckFloat64HoleModeOf(node->op());
+          switch (mode) {
+            case CheckFloat64HoleMode::kAllowReturnHole:
+              if (truncation.IsUnused()) return VisitUnused(node);
+              if (truncation.IsUsedAsFloat64()) {
+                VisitUnop(node, UseInfo::TruncatingFloat64(),
+                          MachineRepresentation::kFloat64);
+                if (lower()) DeferReplacement(node, node->InputAt(0));
+              } else {
+                VisitUnop(
+                    node,
+                    UseInfo(MachineRepresentation::kFloat64, Truncation::Any()),
+                    MachineRepresentation::kFloat64, Type::Number());
+              }
+              break;
+            case CheckFloat64HoleMode::kNeverReturnHole:
+              VisitUnop(
+                  node,
+                  UseInfo(MachineRepresentation::kFloat64, Truncation::Any()),
+                  MachineRepresentation::kFloat64, Type::Number());
+              break;
+          }
         }
         return;
       }
@@ -2741,6 +2795,8 @@ class RepresentationSelector {
                   MachineRepresentation::kFloat64);
         if (lower()) NodeProperties::ChangeOp(node, Float64Op(node));
         return;
+      case IrOpcode::kFrameState:
+        return VisitFrameState(node);
       case IrOpcode::kStateValues:
         return VisitStateValues(node);
       case IrOpcode::kObjectState:
@@ -2749,15 +2805,18 @@ class RepresentationSelector {
         // We just get rid of the sigma here. In principle, it should be
         // possible to refine the truncation and representation based on
         // the sigma's type.
-        MachineRepresentation output =
+        MachineRepresentation representation =
             GetOutputInfoForPhi(node, TypeOf(node->InputAt(0)), truncation);
-        VisitUnop(node, UseInfo(output, truncation), output);
+
+        // For now, we just handle specially the impossible case.
+        MachineRepresentation output = TypeOf(node)->IsInhabited()
+                                           ? representation
+                                           : MachineRepresentation::kNone;
+
+        VisitUnop(node, UseInfo(representation, truncation), output);
         if (lower()) DeferReplacement(node, node->InputAt(0));
         return;
       }
-
-      case IrOpcode::kOsrGuard:
-        return VisitOsrGuard(node);
 
       case IrOpcode::kFinishRegion:
         VisitInputs(node);
@@ -2779,7 +2838,6 @@ class RepresentationSelector {
       case IrOpcode::kDeoptimize:
       case IrOpcode::kEffectPhi:
       case IrOpcode::kTerminate:
-      case IrOpcode::kFrameState:
       case IrOpcode::kCheckpoint:
       case IrOpcode::kLoop:
       case IrOpcode::kMerge:

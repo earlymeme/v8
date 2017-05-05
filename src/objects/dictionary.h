@@ -5,7 +5,10 @@
 #ifndef V8_OBJECTS_DICTIONARY_H_
 #define V8_OBJECTS_DICTIONARY_H_
 
-#include "src/objects.h"
+#include "src/objects/hash-table.h"
+
+#include "src/base/export-template.h"
+#include "src/globals.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -273,6 +276,12 @@ class UnseededNumberDictionaryShape : public NumberDictionaryShape {
 
   static inline Map* GetMap(Isolate* isolate);
 };
+
+extern template class EXPORT_TEMPLATE_DECLARE(V8_EXPORT_PRIVATE)
+    HashTable<SeededNumberDictionary, SeededNumberDictionaryShape, uint32_t>;
+
+extern template class EXPORT_TEMPLATE_DECLARE(V8_EXPORT_PRIVATE)
+    Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape, uint32_t>;
 
 class SeededNumberDictionary
     : public Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape,

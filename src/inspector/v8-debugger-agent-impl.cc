@@ -34,7 +34,6 @@ using protocol::Debugger::BreakpointId;
 using protocol::Debugger::CallFrame;
 using protocol::Runtime::ExceptionDetails;
 using protocol::Runtime::ScriptId;
-using protocol::Runtime::StackTrace;
 using protocol::Runtime::RemoteObject;
 
 namespace DebuggerAgentState {
@@ -238,7 +237,7 @@ Response V8DebuggerAgentImpl::disable() {
                       v8::debug::NoBreakOnException);
   m_state->setInteger(DebuggerAgentState::asyncCallStackDepth, 0);
 
-  if (isPaused()) m_debugger->continueProgram();
+  if (isPaused()) m_debugger->continueProgram(m_session->contextGroupId());
   m_debugger->disable();
   JavaScriptCallFrames emptyCallFrames;
   m_pausedCallFrames.swap(emptyCallFrames);
@@ -457,11 +456,15 @@ Response V8DebuggerAgentImpl::getPossibleBreakpoints(
   }
   auto it = m_scripts.find(scriptId);
   if (it == m_scripts.end()) return Response::Error("Script not found");
-
   std::vector<v8::debug::BreakLocation> v8Locations;
-  if (!it->second->getPossibleBreakpoints(
-          v8Start, v8End, restrictToFunction.fromMaybe(false), &v8Locations)) {
-    return Response::InternalError();
+  {
+    v8::HandleScope handleScope(m_isolate);
+    v8::Local<v8::Context> debuggerContext =
+        v8::debug::GetDebugContext(m_isolate);
+    v8::Context::Scope contextScope(debuggerContext);
+    v8::TryCatch tryCatch(m_isolate);
+    it->second->getPossibleBreakpoints(
+        v8Start, v8End, restrictToFunction.fromMaybe(false), &v8Locations);
   }
 
   *locations = protocol::Array<protocol::Debugger::BreakLocation>::create();
@@ -598,7 +601,8 @@ Response V8DebuggerAgentImpl::searchInContent(
 Response V8DebuggerAgentImpl::setScriptSource(
     const String16& scriptId, const String16& newContent, Maybe<bool> dryRun,
     Maybe<protocol::Array<protocol::Debugger::CallFrame>>* newCallFrames,
-    Maybe<bool>* stackChanged, Maybe<StackTrace>* asyncStackTrace,
+    Maybe<bool>* stackChanged,
+    Maybe<protocol::Runtime::StackTrace>* asyncStackTrace,
     Maybe<protocol::Runtime::ExceptionDetails>* optOutCompileError) {
   if (!enabled()) return Response::Error(kDebuggerNotEnabled);
 
@@ -631,7 +635,7 @@ Response V8DebuggerAgentImpl::setScriptSource(
 Response V8DebuggerAgentImpl::restartFrame(
     const String16& callFrameId,
     std::unique_ptr<Array<CallFrame>>* newCallFrames,
-    Maybe<StackTrace>* asyncStackTrace) {
+    Maybe<protocol::Runtime::StackTrace>* asyncStackTrace) {
   if (!isPaused()) return Response::Error(kDebuggerNotPaused);
   InjectedScript::CallFrameScope scope(m_inspector, m_session->contextGroupId(),
                                        callFrameId);
@@ -715,7 +719,7 @@ Response V8DebuggerAgentImpl::pause() {
 Response V8DebuggerAgentImpl::resume() {
   if (!isPaused()) return Response::Error(kDebuggerNotPaused);
   m_session->releaseObjectGroup(kBacktraceObjectGroup);
-  m_debugger->continueProgram();
+  m_debugger->continueProgram(m_session->contextGroupId());
   return Response::OK();
 }
 
@@ -1028,11 +1032,14 @@ Response V8DebuggerAgentImpl::currentCallFrames(
   return Response::OK();
 }
 
-std::unique_ptr<StackTrace> V8DebuggerAgentImpl::currentAsyncStackTrace() {
-  if (!isPaused()) return nullptr;
-  V8StackTraceImpl* stackTrace = m_debugger->currentAsyncCallChain();
-  return stackTrace ? stackTrace->buildInspectorObjectForTail(m_debugger)
-                    : nullptr;
+std::unique_ptr<protocol::Runtime::StackTrace>
+V8DebuggerAgentImpl::currentAsyncStackTrace() {
+  std::shared_ptr<AsyncStackTrace> asyncParent =
+      m_debugger->currentAsyncParent();
+  if (!asyncParent) return nullptr;
+  return asyncParent->buildInspectorObject(
+      m_debugger->currentAsyncCreation().get(),
+      m_debugger->maxAsyncCallChainDepth() - 1);
 }
 
 bool V8DebuggerAgentImpl::isPaused() const { return m_debugger->isPaused(); }
@@ -1247,7 +1254,7 @@ void V8DebuggerAgentImpl::breakProgram(
   std::vector<BreakReason> currentScheduledReason;
   currentScheduledReason.swap(m_breakReason);
   pushBreakDetails(breakReason, std::move(data));
-  m_debugger->breakProgram();
+  if (!m_debugger->breakProgram(m_session->contextGroupId())) return;
   popBreakDetails();
   m_breakReason.swap(currentScheduledReason);
   if (!m_breakReason.empty()) {

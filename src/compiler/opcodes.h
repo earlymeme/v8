@@ -66,7 +66,6 @@
   V(Call)                   \
   V(Parameter)              \
   V(OsrValue)               \
-  V(OsrGuard)               \
   V(LoopExit)               \
   V(LoopExitValue)          \
   V(LoopExitEffect)         \
@@ -575,19 +574,14 @@
   V(F32x4UConvertI32x4)         \
   V(F32x4Abs)                   \
   V(F32x4Neg)                   \
-  V(F32x4Sqrt)                  \
   V(F32x4RecipApprox)           \
   V(F32x4RecipSqrtApprox)       \
   V(F32x4Add)                   \
+  V(F32x4AddHoriz)              \
   V(F32x4Sub)                   \
   V(F32x4Mul)                   \
-  V(F32x4Div)                   \
   V(F32x4Min)                   \
   V(F32x4Max)                   \
-  V(F32x4MinNum)                \
-  V(F32x4MaxNum)                \
-  V(F32x4RecipRefine)           \
-  V(F32x4RecipSqrtRefine)       \
   V(F32x4Eq)                    \
   V(F32x4Ne)                    \
   V(F32x4Lt)                    \
@@ -604,6 +598,7 @@
   V(I32x4Shl)                   \
   V(I32x4ShrS)                  \
   V(I32x4Add)                   \
+  V(I32x4AddHoriz)              \
   V(I32x4Sub)                   \
   V(I32x4Mul)                   \
   V(I32x4MinS)                  \
@@ -635,6 +630,7 @@
   V(I16x8SConvertI32x4)         \
   V(I16x8Add)                   \
   V(I16x8AddSaturateS)          \
+  V(I16x8AddHoriz)              \
   V(I16x8Sub)                   \
   V(I16x8SubSaturateS)          \
   V(I16x8Mul)                   \
@@ -691,19 +687,16 @@
   V(S128Load)                   \
   V(S128Store)                  \
   V(S128Zero)                   \
+  V(S128Not)                    \
   V(S128And)                    \
   V(S128Or)                     \
   V(S128Xor)                    \
-  V(S128Not)                    \
-  V(S32x4Select)                \
-  V(S32x4Swizzle)               \
   V(S32x4Shuffle)               \
-  V(S16x8Select)                \
-  V(S16x8Swizzle)               \
+  V(S32x4Select)                \
   V(S16x8Shuffle)               \
-  V(S8x16Select)                \
-  V(S8x16Swizzle)               \
+  V(S16x8Select)                \
   V(S8x16Shuffle)               \
+  V(S8x16Select)                \
   V(S1x4Zero)                   \
   V(S1x4And)                    \
   V(S1x4Or)                     \

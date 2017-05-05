@@ -252,7 +252,7 @@ class WasmGraphBuilder {
   Node* SimdShiftOp(wasm::WasmOpcode opcode, uint8_t shift,
                     const NodeVector& inputs);
 
-  Node* SimdSwizzleOp(wasm::WasmOpcode opcode, uint32_t swizzle,
+  Node* SimdShuffleOp(uint8_t shuffle[16], unsigned lanes,
                       const NodeVector& inputs);
 
   bool has_simd() const { return has_simd_; }

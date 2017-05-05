@@ -83,7 +83,8 @@ class PropertyAccessInfo final {
 
   PropertyAccessInfo();
 
-  bool Merge(PropertyAccessInfo const* that) WARN_UNUSED_RESULT;
+  bool Merge(PropertyAccessInfo const* that, AccessMode access_mode,
+             Zone* zone) WARN_UNUSED_RESULT;
 
   bool IsNotFound() const { return kind() == kNotFound; }
   bool IsDataConstant() const { return kind() == kDataConstant; }
@@ -149,6 +150,8 @@ class AccessInfoFactory final {
                                   ZoneVector<PropertyAccessInfo>* access_infos);
 
  private:
+  bool ConsolidateElementLoad(MapHandleList const& maps,
+                              ElementAccessInfo* access_info);
   bool LookupSpecialFieldAccessor(Handle<Map> map, Handle<Name> name,
                                   PropertyAccessInfo* access_info);
   bool LookupTransition(Handle<Map> map, Handle<Name> name,

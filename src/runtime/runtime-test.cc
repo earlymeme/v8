@@ -111,14 +111,20 @@ bool WasmInstantiateOverride(const v8::FunctionCallbackInfo<v8::Value>& args) {
   return true;
 }
 
-bool GetWasmFromResolvedPromise(
-    const v8::FunctionCallbackInfo<v8::Value>& args) {
+bool GetWasmFromArray(const v8::FunctionCallbackInfo<v8::Value>& args) {
   CHECK(args.Length() == 1);
-  v8::Local<v8::Promise> promise = v8::Local<v8::Promise>::Cast(args[0]);
-  CHECK(promise->State() == v8::Promise::PromiseState::kFulfilled);
-  args.GetReturnValue().Set(promise);
+  v8::Local<v8::Context> context = args.GetIsolate()->GetCurrentContext();
+  v8::Local<v8::Value> module =
+      v8::Local<v8::Object>::Cast(args[0])->Get(context, 0).ToLocalChecked();
+
+  v8::Local<v8::Promise::Resolver> resolver =
+      v8::Promise::Resolver::New(context).ToLocalChecked();
+  args.GetReturnValue().Set(resolver->GetPromise());
+  USE(resolver->Resolve(context, module));
   return true;
 }
+
+bool NoExtension(const v8::FunctionCallbackInfo<v8::Value>&) { return false; }
 
 }  // namespace
 
@@ -159,6 +165,7 @@ RUNTIME_FUNCTION(Runtime_DeoptimizeFunction) {
     return isolate->heap()->undefined_value();
   }
   Handle<JSFunction> function = Handle<JSFunction>::cast(function_object);
+  function->shared()->set_marked_for_tier_up(false);
 
   // If the function is not optimized, just return.
   if (!function->IsOptimized()) return isolate->heap()->undefined_value();
@@ -273,6 +280,11 @@ RUNTIME_FUNCTION(Runtime_OptimizeFunctionOnNextCall) {
   if (function->IsOptimized()) return isolate->heap()->undefined_value();
 
   function->MarkForOptimization();
+  if (FLAG_trace_opt) {
+    PrintF("[manually marking ");
+    function->ShortPrint();
+    PrintF(" for optimization]\n");
+  }
 
   if (args.length() == 2) {
     CONVERT_ARG_HANDLE_CHECKED(String, type, 1);
@@ -394,6 +406,13 @@ RUNTIME_FUNCTION(Runtime_GetOptimizationCount) {
   return Smi::FromInt(function->shared()->opt_count());
 }
 
+RUNTIME_FUNCTION(Runtime_GetDeoptCount) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSFunction, function, 0);
+  return Smi::FromInt(function->shared()->deopt_count());
+}
+
 static void ReturnThis(const v8::FunctionCallbackInfo<v8::Value>& args) {
   args.GetReturnValue().Set(args.This());
 }
@@ -455,20 +474,12 @@ RUNTIME_FUNCTION(Runtime_ClearFunctionFeedback) {
 }
 
 RUNTIME_FUNCTION(Runtime_SetWasmCompileFromPromiseOverload) {
-  v8::ExtensionCallback old = isolate->wasm_compile_callback();
-  HandleScope scope(isolate);
-  Handle<Foreign> ret =
-      isolate->factory()->NewForeign(reinterpret_cast<Address>(old));
-  isolate->set_wasm_compile_callback(GetWasmFromResolvedPromise);
-  return *ret;
+  isolate->set_wasm_compile_callback(GetWasmFromArray);
+  return isolate->heap()->undefined_value();
 }
 
 RUNTIME_FUNCTION(Runtime_ResetWasmOverloads) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(1, args.length());
-  CONVERT_ARG_HANDLE_CHECKED(Foreign, old, 0);
-  isolate->set_wasm_compile_callback(
-      reinterpret_cast<v8::ExtensionCallback>(old->foreign_address()));
+  isolate->set_wasm_compile_callback(NoExtension);
   return isolate->heap()->undefined_value();
 }
 
@@ -1027,5 +1038,6 @@ RUNTIME_FUNCTION(Runtime_DecrementWaitCount) {
   isolate->DecrementWaitCountForTesting();
   return isolate->heap()->undefined_value();
 }
+
 }  // namespace internal
 }  // namespace v8

@@ -17,6 +17,11 @@ namespace v8 {
 namespace internal {
 namespace compiler {
 
+std::ostream& operator<<(std::ostream& os, CallFrequency f) {
+  if (f.IsUnknown()) return os << "unknown";
+  return os << f.value();
+}
+
 VectorSlotPair::VectorSlotPair() {}
 
 
@@ -747,7 +752,7 @@ const Operator* JSOperatorBuilder::CallForwardVarargs(
       parameters);                                               // parameter
 }
 
-const Operator* JSOperatorBuilder::Call(size_t arity, float frequency,
+const Operator* JSOperatorBuilder::Call(size_t arity, CallFrequency frequency,
                                         VectorSlotPair const& feedback,
                                         ConvertReceiverMode convert_mode,
                                         TailCallMode tail_call_mode) {
@@ -793,7 +798,8 @@ const Operator* JSOperatorBuilder::CallRuntime(const Runtime::Function* f,
       parameters);                                        // parameter
 }
 
-const Operator* JSOperatorBuilder::Construct(uint32_t arity, float frequency,
+const Operator* JSOperatorBuilder::Construct(uint32_t arity,
+                                             CallFrequency frequency,
                                              VectorSlotPair const& feedback) {
   ConstructParameters parameters(arity, frequency, feedback);
   return new (zone()) Operator1<ConstructParameters>(   // --
@@ -891,12 +897,11 @@ const Operator* JSOperatorBuilder::StoreNamedOwn(
       parameters);                                          // parameter
 }
 
-const Operator* JSOperatorBuilder::DeleteProperty(LanguageMode language_mode) {
-  return new (zone()) Operator1<LanguageMode>(               // --
+const Operator* JSOperatorBuilder::DeleteProperty() {
+  return new (zone()) Operator(                              // --
       IrOpcode::kJSDeleteProperty, Operator::kNoProperties,  // opcode
       "JSDeleteProperty",                                    // name
-      2, 1, 1, 1, 1, 2,                                      // counts
-      language_mode);                                        // parameter
+      3, 1, 1, 1, 1, 2);                                     // counts
 }
 
 

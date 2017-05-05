@@ -50,6 +50,22 @@ RUNTIME_FUNCTION(Runtime_ArrayBufferNeuter) {
   return isolate->heap()->undefined_value();
 }
 
+RUNTIME_FUNCTION(Runtime_TypedArrayCopyElements) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(3, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSTypedArray, destination, 0);
+  CONVERT_ARG_HANDLE_CHECKED(JSReceiver, source, 1);
+  CONVERT_NUMBER_ARG_HANDLE_CHECKED(length_obj, 2);
+
+  size_t length;
+  CHECK(TryNumberToSize(*length_obj, &length));
+
+  Handle<JSTypedArray> destination_ta = Handle<JSTypedArray>::cast(destination);
+
+  ElementsAccessor* accessor = destination_ta->GetElementsAccessor();
+  return accessor->CopyElements(source, destination, length);
+}
+
 #define BUFFER_VIEW_GETTER(Type, getter, accessor)   \
   RUNTIME_FUNCTION(Runtime_##Type##Get##getter) {    \
     HandleScope scope(isolate);                      \
@@ -63,6 +79,12 @@ BUFFER_VIEW_GETTER(ArrayBufferView, ByteOffset, byte_offset)
 BUFFER_VIEW_GETTER(TypedArray, Length, length)
 
 #undef BUFFER_VIEW_GETTER
+
+RUNTIME_FUNCTION(Runtime_ArrayBufferViewWasNeutered) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
+  return isolate->heap()->ToBoolean(JSTypedArray::cast(args[0])->WasNeutered());
+}
 
 RUNTIME_FUNCTION(Runtime_TypedArrayGetBuffer) {
   HandleScope scope(isolate);
@@ -222,7 +244,6 @@ RUNTIME_FUNCTION(Runtime_IsTypedArray) {
   DCHECK_EQ(1, args.length());
   return isolate->heap()->ToBoolean(args[0]->IsJSTypedArray());
 }
-
 
 RUNTIME_FUNCTION(Runtime_IsSharedTypedArray) {
   HandleScope scope(isolate);

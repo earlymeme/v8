@@ -68,8 +68,10 @@ TEST_MAP = {
     "debugger",
     "mjsunit",
     "cctest",
+    "wasm-spec-tests",
     "inspector",
     "webkit",
+    "mkgrokdump",
     "fuzzer",
     "message",
     "preparser",
@@ -81,7 +83,9 @@ TEST_MAP = {
     "debugger",
     "mjsunit",
     "cctest",
+    "wasm-spec-tests",
     "inspector",
+    "mkgrokdump",
     "fuzzer",
     "message",
     "preparser",
@@ -419,6 +423,7 @@ def SetupEnvironment(options):
       'coverage=1',
       'coverage_dir=%s' % options.sancov_dir,
       symbolizer,
+      "allow_user_segv_handler=1",
     ])
 
   if options.cfi_vptr:

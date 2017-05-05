@@ -496,6 +496,41 @@ Condition FlagsConditionToCondition(FlagsCondition condition) {
     DCHECK_EQ(LeaveCC, i.OutputSBit());                                        \
   } while (0)
 
+#define ASSEMBLE_NEON_NARROWING_OP(dt)                \
+  do {                                                \
+    Simd128Register dst = i.OutputSimd128Register(),  \
+                    src0 = i.InputSimd128Register(0), \
+                    src1 = i.InputSimd128Register(1); \
+    if (dst.is(src0) && dst.is(src1)) {               \
+      __ vqmovn(dt, dst.low(), src0);                 \
+      __ vmov(dst.high(), dst.low());                 \
+    } else if (dst.is(src0)) {                        \
+      __ vqmovn(dt, dst.low(), src0);                 \
+      __ vqmovn(dt, dst.high(), src1);                \
+    } else {                                          \
+      __ vqmovn(dt, dst.high(), src1);                \
+      __ vqmovn(dt, dst.low(), src0);                 \
+    }                                                 \
+  } while (0)
+
+#define ASSEMBLE_NEON_PAIRWISE_OP(op, size)               \
+  do {                                                    \
+    Simd128Register dst = i.OutputSimd128Register(),      \
+                    src0 = i.InputSimd128Register(0),     \
+                    src1 = i.InputSimd128Register(1);     \
+    if (dst.is(src0)) {                                   \
+      __ op(size, dst.low(), src0.low(), src0.high());    \
+      if (dst.is(src1)) {                                 \
+        __ vmov(dst.high(), dst.low());                   \
+      } else {                                            \
+        __ op(size, dst.high(), src1.low(), src1.high()); \
+      }                                                   \
+    } else {                                              \
+      __ op(size, dst.high(), src1.low(), src1.high());   \
+      __ op(size, dst.low(), src0.low(), src0.high());    \
+    }                                                     \
+  } while (0)
+
 void CodeGenerator::AssembleDeconstructFrame() {
   __ LeaveFrame(StackFrame::MANUAL);
   unwinding_info_writer_.MarkFrameDeconstructed(__ pc_offset());
@@ -503,9 +538,6 @@ void CodeGenerator::AssembleDeconstructFrame() {
 
 void CodeGenerator::AssemblePrepareTailCall() {
   if (frame_access_state()->has_frame()) {
-    if (FLAG_enable_embedded_constant_pool) {
-      __ ldr(cp, MemOperand(fp, StandardFrameConstants::kConstantPoolOffset));
-    }
     __ ldr(lr, MemOperand(fp, StandardFrameConstants::kCallerPCOffset));
     __ ldr(fp, MemOperand(fp, StandardFrameConstants::kCallerFPOffset));
   }
@@ -1614,6 +1646,24 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
               i.InputSimd128Register(1));
       break;
     }
+    case kArmF32x4AddHoriz: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src0 = i.InputSimd128Register(0),
+                      src1 = i.InputSimd128Register(1);
+      // Make sure we don't overwrite source data before it's used.
+      if (dst.is(src0)) {
+        __ vpadd(dst.low(), src0.low(), src0.high());
+        if (dst.is(src1)) {
+          __ vmov(dst.high(), dst.low());
+        } else {
+          __ vpadd(dst.high(), src1.low(), src1.high());
+        }
+      } else {
+        __ vpadd(dst.high(), src1.low(), src1.high());
+        __ vpadd(dst.low(), src0.low(), src0.high());
+      }
+      break;
+    }
     case kArmF32x4Sub: {
       __ vsub(i.OutputSimd128Register(), i.InputSimd128Register(0),
               i.InputSimd128Register(1));
@@ -1632,16 +1682,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kArmF32x4Max: {
       __ vmax(i.OutputSimd128Register(), i.InputSimd128Register(0),
               i.InputSimd128Register(1));
-      break;
-    }
-    case kArmF32x4RecipRefine: {
-      __ vrecps(i.OutputSimd128Register(), i.InputSimd128Register(0),
-                i.InputSimd128Register(1));
-      break;
-    }
-    case kArmF32x4RecipSqrtRefine: {
-      __ vrsqrts(i.OutputSimd128Register(), i.InputSimd128Register(0),
-                 i.InputSimd128Register(1));
       break;
     }
     case kArmF32x4Eq: {
@@ -1712,6 +1752,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
               i.InputSimd128Register(1));
       break;
     }
+    case kArmI32x4AddHoriz:
+      ASSEMBLE_NEON_PAIRWISE_OP(vpadd, Neon32);
+      break;
     case kArmI32x4Sub: {
       __ vsub(Neon32, i.OutputSimd128Register(), i.InputSimd128Register(0),
               i.InputSimd128Register(1));
@@ -1831,25 +1874,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
               i.InputInt4(1));
       break;
     }
-    case kArmI16x8SConvertI32x4: {
-      Simd128Register dst = i.OutputSimd128Register(),
-                      src0 = i.InputSimd128Register(0),
-                      src1 = i.InputSimd128Register(1);
-      // Take care not to overwrite a source register before it's used.
-      if (dst.is(src0) && dst.is(src1)) {
-        __ vqmovn(NeonS16, dst.low(), src0);
-        __ vmov(dst.high(), dst.low());
-      } else if (dst.is(src0)) {
-        // dst is src0, so narrow src0 first.
-        __ vqmovn(NeonS16, dst.low(), src0);
-        __ vqmovn(NeonS16, dst.high(), src1);
-      } else {
-        // dst may alias src1, so narrow src1 first.
-        __ vqmovn(NeonS16, dst.high(), src1);
-        __ vqmovn(NeonS16, dst.low(), src0);
-      }
+    case kArmI16x8SConvertI32x4:
+      ASSEMBLE_NEON_NARROWING_OP(NeonS16);
       break;
-    }
     case kArmI16x8Add: {
       __ vadd(Neon16, i.OutputSimd128Register(), i.InputSimd128Register(0),
               i.InputSimd128Register(1));
@@ -1860,6 +1887,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                i.InputSimd128Register(1));
       break;
     }
+    case kArmI16x8AddHoriz:
+      ASSEMBLE_NEON_PAIRWISE_OP(vpadd, Neon16);
+      break;
     case kArmI16x8Sub: {
       __ vsub(Neon16, i.OutputSimd128Register(), i.InputSimd128Register(0),
               i.InputSimd128Register(1));
@@ -1922,25 +1952,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
               i.InputInt4(1));
       break;
     }
-    case kArmI16x8UConvertI32x4: {
-      Simd128Register dst = i.OutputSimd128Register(),
-                      src0 = i.InputSimd128Register(0),
-                      src1 = i.InputSimd128Register(1);
-      // Take care not to overwrite a source register before it's used.
-      if (dst.is(src0) && dst.is(src1)) {
-        __ vqmovn(NeonU16, dst.low(), src0);
-        __ vmov(dst.high(), dst.low());
-      } else if (dst.is(src0)) {
-        // dst is src0, so narrow src0 first.
-        __ vqmovn(NeonU16, dst.low(), src0);
-        __ vqmovn(NeonU16, dst.high(), src1);
-      } else {
-        // dst may alias src1, so narrow src1 first.
-        __ vqmovn(NeonU16, dst.high(), src1);
-        __ vqmovn(NeonU16, dst.low(), src0);
-      }
+    case kArmI16x8UConvertI32x4:
+      ASSEMBLE_NEON_NARROWING_OP(NeonU16);
       break;
-    }
     case kArmI16x8AddSaturateU: {
       __ vqadd(NeonU16, i.OutputSimd128Register(), i.InputSimd128Register(0),
                i.InputSimd128Register(1));
@@ -1999,25 +2013,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
               i.InputInt3(1));
       break;
     }
-    case kArmI8x16SConvertI16x8: {
-      Simd128Register dst = i.OutputSimd128Register(),
-                      src0 = i.InputSimd128Register(0),
-                      src1 = i.InputSimd128Register(1);
-      // Take care not to overwrite a source register before it's used.
-      if (dst.is(src0) && dst.is(src1)) {
-        __ vqmovn(NeonS8, dst.low(), src0);
-        __ vmov(dst.high(), dst.low());
-      } else if (dst.is(src0)) {
-        // dst is src0, so narrow src0 first.
-        __ vqmovn(NeonS8, dst.low(), src0);
-        __ vqmovn(NeonS8, dst.high(), src1);
-      } else {
-        // dst may alias src1, so narrow src1 first.
-        __ vqmovn(NeonS8, dst.high(), src1);
-        __ vqmovn(NeonS8, dst.low(), src0);
-      }
+    case kArmI8x16SConvertI16x8:
+      ASSEMBLE_NEON_NARROWING_OP(NeonS8);
       break;
-    }
     case kArmI8x16Add: {
       __ vadd(Neon8, i.OutputSimd128Register(), i.InputSimd128Register(0),
               i.InputSimd128Register(1));
@@ -2079,25 +2077,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
               i.InputInt3(1));
       break;
     }
-    case kArmI8x16UConvertI16x8: {
-      Simd128Register dst = i.OutputSimd128Register(),
-                      src0 = i.InputSimd128Register(0),
-                      src1 = i.InputSimd128Register(1);
-      // Take care not to overwrite a source register before it's used.
-      if (dst.is(src0) && dst.is(src1)) {
-        __ vqmovn(NeonU8, dst.low(), src0);
-        __ vmov(dst.high(), dst.low());
-      } else if (dst.is(src0)) {
-        // dst is src0, so narrow src0 first.
-        __ vqmovn(NeonU8, dst.low(), src0);
-        __ vqmovn(NeonU8, dst.high(), src1);
-      } else {
-        // dst may alias src1, so narrow src1 first.
-        __ vqmovn(NeonU8, dst.high(), src1);
-        __ vqmovn(NeonU8, dst.low(), src0);
-      }
+    case kArmI8x16UConvertI16x8:
+      ASSEMBLE_NEON_NARROWING_OP(NeonU8);
       break;
-    }
     case kArmI8x16AddSaturateU: {
       __ vqadd(NeonU8, i.OutputSimd128Register(), i.InputSimd128Register(0),
                i.InputSimd128Register(1));
@@ -2157,6 +2139,197 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       DCHECK(i.OutputSimd128Register().is(i.InputSimd128Register(0)));
       __ vbsl(i.OutputSimd128Register(), i.InputSimd128Register(1),
               i.InputSimd128Register(2));
+      break;
+    }
+    case kArmS32x4ZipLeft: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [0, 1, 2, 3], src1 = [4, 5, 6, 7]
+      __ vmov(dst.high(), src1.low());         // dst = [0, 1, 4, 5]
+      __ vtrn(Neon32, dst.low(), dst.high());  // dst = [0, 4, 1, 5]
+      break;
+    }
+    case kArmS32x4ZipRight: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [4, 5, 6, 7], src1 = [0, 1, 2, 3] (flipped from ZipLeft).
+      __ vmov(dst.low(), src1.high());         // dst = [2, 3, 6, 7]
+      __ vtrn(Neon32, dst.low(), dst.high());  // dst = [2, 6, 3, 7]
+      break;
+    }
+    case kArmS32x4UnzipLeft: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [0, 1, 2, 3], src1 = [4, 5, 6, 7]
+      __ vmov(kScratchQuadReg, src1);
+      __ vuzp(Neon32, dst, kScratchQuadReg);  // dst = [0, 2, 4, 6]
+      break;
+    }
+    case kArmS32x4UnzipRight: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [4, 5, 6, 7], src1 = [0, 1, 2, 3] (flipped from UnzipLeft).
+      __ vmov(kScratchQuadReg, src1);
+      __ vuzp(Neon32, kScratchQuadReg, dst);  // dst = [1, 3, 5, 7]
+      break;
+    }
+    case kArmS32x4TransposeLeft: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [0, 1, 2, 3], src1 = [4, 5, 6, 7]
+      __ vmov(kScratchQuadReg, src1);
+      __ vtrn(Neon32, dst, kScratchQuadReg);  // dst = [0, 4, 2, 6]
+      break;
+    }
+    case kArmS32x4TransposeRight: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [4, 5, 6, 7], src1 = [0, 1, 2, 3] (flipped from TransposeLeft).
+      __ vmov(kScratchQuadReg, src1);
+      __ vtrn(Neon32, kScratchQuadReg, dst);  // dst = [1, 5, 3, 7]
+      break;
+    }
+    case kArmS16x8ZipLeft: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      // src0 = [0, 1, 2, 3, ... 7], src1 = [8, 9, 10, 11, ... 15]
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      __ vmov(dst.high(), src1.low());         // dst = [0, 1, 2, 3, 8, ... 11]
+      __ vzip(Neon16, dst.low(), dst.high());  // dst = [0, 8, 1, 9, ... 11]
+      break;
+    }
+    case kArmS16x8ZipRight: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [8, 9, 10, 11, ... 15], src1 = [0, 1, 2, 3, ... 7] (flipped).
+      __ vmov(dst.low(), src1.high());
+      __ vzip(Neon16, dst.low(), dst.high());  // dst = [4, 12, 5, 13, ... 15]
+      break;
+    }
+    case kArmS16x8UnzipLeft: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [0, 1, 2, 3, ... 7], src1 = [8, 9, 10, 11, ... 15]
+      __ vmov(kScratchQuadReg, src1);
+      __ vuzp(Neon16, dst, kScratchQuadReg);  // dst = [0, 2, 4, 6, ... 14]
+      break;
+    }
+    case kArmS16x8UnzipRight: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [8, 9, 10, 11, ... 15], src1 = [0, 1, 2, 3, ... 7] (flipped).
+      __ vmov(kScratchQuadReg, src1);
+      __ vuzp(Neon16, kScratchQuadReg, dst);  // dst = [1, 3, 5, 7, ... 15]
+      break;
+    }
+    case kArmS16x8TransposeLeft: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [0, 1, 2, 3, ... 7], src1 = [8, 9, 10, 11, ... 15]
+      __ vmov(kScratchQuadReg, src1);
+      __ vtrn(Neon16, dst, kScratchQuadReg);  // dst = [0, 8, 2, 10, ... 14]
+      break;
+    }
+    case kArmS16x8TransposeRight: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [8, 9, 10, 11, ... 15], src1 = [0, 1, 2, 3, ... 7] (flipped).
+      __ vmov(kScratchQuadReg, src1);
+      __ vtrn(Neon16, kScratchQuadReg, dst);  // dst = [1, 9, 3, 11, ... 15]
+      break;
+    }
+    case kArmS8x16ZipLeft: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [0, 1, 2, 3, ... 15], src1 = [16, 17, 18, 19, ... 31]
+      __ vmov(dst.high(), src1.low());
+      __ vzip(Neon8, dst.low(), dst.high());  // dst = [0, 16, 1, 17, ... 23]
+      break;
+    }
+    case kArmS8x16ZipRight: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [16, 17, 18, 19, ... 31], src1 = [0, 1, 2, 3, ... 15] (flipped).
+      __ vmov(dst.low(), src1.high());
+      __ vzip(Neon8, dst.low(), dst.high());  // dst = [8, 24, 9, 25, ... 31]
+      break;
+    }
+    case kArmS8x16UnzipLeft: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [0, 1, 2, 3, ... 15], src1 = [16, 17, 18, 19, ... 31]
+      __ vmov(kScratchQuadReg, src1);
+      __ vuzp(Neon8, dst, kScratchQuadReg);  // dst = [0, 2, 4, 6, ... 30]
+      break;
+    }
+    case kArmS8x16UnzipRight: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [16, 17, 18, 19, ... 31], src1 = [0, 1, 2, 3, ... 15] (flipped).
+      __ vmov(kScratchQuadReg, src1);
+      __ vuzp(Neon8, kScratchQuadReg, dst);  // dst = [1, 3, 5, 7, ... 31]
+      break;
+    }
+    case kArmS8x16TransposeLeft: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [0, 1, 2, 3, ... 15], src1 = [16, 17, 18, 19, ... 31]
+      __ vmov(kScratchQuadReg, src1);
+      __ vtrn(Neon8, dst, kScratchQuadReg);  // dst = [0, 16, 2, 18, ... 30]
+      break;
+    }
+    case kArmS8x16TransposeRight: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      src1 = i.InputSimd128Register(1);
+      DCHECK(dst.is(i.InputSimd128Register(0)));
+      // src0 = [16, 17, 18, 19, ... 31], src1 = [0, 1, 2, 3, ... 15] (flipped).
+      __ vmov(kScratchQuadReg, src1);
+      __ vtrn(Neon8, kScratchQuadReg, dst);  // dst = [1, 17, 3, 19, ... 31]
+      break;
+    }
+    case kArmS8x16Concat: {
+      __ vext(i.OutputSimd128Register(), i.InputSimd128Register(0),
+              i.InputSimd128Register(1), i.InputInt4(2));
+      break;
+    }
+    case kArmS32x2Reverse: {
+      __ vrev64(Neon32, i.OutputSimd128Register(), i.InputSimd128Register(0));
+      break;
+    }
+    case kArmS16x4Reverse: {
+      __ vrev64(Neon16, i.OutputSimd128Register(), i.InputSimd128Register(0));
+      break;
+    }
+    case kArmS16x2Reverse: {
+      __ vrev32(Neon16, i.OutputSimd128Register(), i.InputSimd128Register(0));
+      break;
+    }
+    case kArmS8x8Reverse: {
+      __ vrev64(Neon8, i.OutputSimd128Register(), i.InputSimd128Register(0));
+      break;
+    }
+    case kArmS8x4Reverse: {
+      __ vrev32(Neon8, i.OutputSimd128Register(), i.InputSimd128Register(0));
+      break;
+    }
+    case kArmS8x2Reverse: {
+      __ vrev16(Neon8, i.OutputSimd128Register(), i.InputSimd128Register(0));
       break;
     }
     case kArmS1x4AnyTrue: {
@@ -2508,9 +2681,7 @@ void CodeGenerator::FinishFrame(Frame* frame) {
     frame->AllocateSavedCalleeRegisterSlots((last - first + 1) *
                                             (kDoubleSize / kPointerSize));
   }
-  const RegList saves = FLAG_enable_embedded_constant_pool
-                            ? (descriptor->CalleeSavedRegisters() & ~pp.bit())
-                            : descriptor->CalleeSavedRegisters();
+  const RegList saves = descriptor->CalleeSavedRegisters();
   if (saves != 0) {
     // Save callee-saved registers.
     frame->AllocateSavedCalleeRegisterSlots(
@@ -2522,14 +2693,8 @@ void CodeGenerator::AssembleConstructFrame() {
   CallDescriptor* descriptor = linkage()->GetIncomingDescriptor();
   if (frame_access_state()->has_frame()) {
     if (descriptor->IsCFunctionCall()) {
-      if (FLAG_enable_embedded_constant_pool) {
-        __ Push(lr, fp, pp);
-        // Adjust FP to point to saved FP.
-        __ sub(fp, sp, Operand(StandardFrameConstants::kConstantPoolOffset));
-      } else {
-        __ Push(lr, fp);
-        __ mov(fp, sp);
-      }
+      __ Push(lr, fp);
+      __ mov(fp, sp);
     } else if (descriptor->IsJSFunctionCall()) {
       __ Prologue(this->info()->GeneratePreagedPrologue());
       if (descriptor->PushArgumentCount()) {
@@ -2615,9 +2780,7 @@ void CodeGenerator::AssembleConstructFrame() {
     __ vstm(db_w, sp, DwVfpRegister::from_code(first),
             DwVfpRegister::from_code(last));
   }
-  const RegList saves = FLAG_enable_embedded_constant_pool
-                            ? (descriptor->CalleeSavedRegisters() & ~pp.bit())
-                            : descriptor->CalleeSavedRegisters();
+  const RegList saves = descriptor->CalleeSavedRegisters();
   if (saves != 0) {
     // Save callee-saved registers.
     __ stm(db_w, sp, saves);
@@ -2629,9 +2792,7 @@ void CodeGenerator::AssembleReturn(InstructionOperand* pop) {
   int pop_count = static_cast<int>(descriptor->StackParameterCount());
 
   // Restore registers.
-  const RegList saves = FLAG_enable_embedded_constant_pool
-                            ? (descriptor->CalleeSavedRegisters() & ~pp.bit())
-                            : descriptor->CalleeSavedRegisters();
+  const RegList saves = descriptor->CalleeSavedRegisters();
   if (saves != 0) {
     __ ldm(ia_w, sp, saves);
   }
@@ -2837,7 +2998,6 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
         __ add(kScratchReg, dst.rn(), Operand(dst.offset()));
         __ vst1(Neon8, NeonListOperand(kScratchQuadReg.low(), 2),
                 NeonMemOperand(kScratchReg));
-        __ veor(kDoubleRegZero, kDoubleRegZero, kDoubleRegZero);
       }
     }
   } else {
@@ -2920,40 +3080,41 @@ void CodeGenerator::AssembleSwap(InstructionOperand* source,
                 NeonMemOperand(kScratchReg));
         __ vst1(Neon8, NeonListOperand(kScratchQuadReg.low(), 2),
                 NeonMemOperand(kScratchReg));
-        __ veor(kDoubleRegZero, kDoubleRegZero, kDoubleRegZero);
       }
     }
   } else if (source->IsFPStackSlot()) {
     DCHECK(destination->IsFPStackSlot());
-    MemOperand src = g.ToMemOperand(source);
-    MemOperand dst = g.ToMemOperand(destination);
+    Register temp_0 = kScratchReg;
+    LowDwVfpRegister temp_1 = kScratchDoubleReg;
+    MemOperand src0 = g.ToMemOperand(source);
+    MemOperand dst0 = g.ToMemOperand(destination);
     MachineRepresentation rep = LocationOperand::cast(source)->representation();
     if (rep == MachineRepresentation::kFloat64) {
-      __ vldr(kScratchDoubleReg, dst);
-      __ vldr(kDoubleRegZero, src);
-      __ vstr(kScratchDoubleReg, src);
-      __ vstr(kDoubleRegZero, dst);
-      // Restore the 0 register.
-      __ veor(kDoubleRegZero, kDoubleRegZero, kDoubleRegZero);
+      MemOperand src1(src0.rn(), src0.offset() + kPointerSize);
+      MemOperand dst1(dst0.rn(), dst0.offset() + kPointerSize);
+      __ vldr(temp_1, dst0);  // Save destination in temp_1.
+      __ ldr(temp_0, src0);   // Then use temp_0 to copy source to destination.
+      __ str(temp_0, dst0);
+      __ ldr(temp_0, src1);
+      __ str(temp_0, dst1);
+      __ vstr(temp_1, src0);
     } else if (rep == MachineRepresentation::kFloat32) {
-      __ vldr(kScratchDoubleReg.low(), dst);
-      __ vldr(kScratchDoubleReg.high(), src);
-      __ vstr(kScratchDoubleReg.low(), src);
-      __ vstr(kScratchDoubleReg.high(), dst);
+      __ vldr(temp_1.low(), dst0);  // Save destination in temp_1.
+      __ ldr(temp_0, src0);  // Then use temp_0 to copy source to destination.
+      __ str(temp_0, dst0);
+      __ vstr(temp_1.low(), src0);
     } else {
       DCHECK_EQ(MachineRepresentation::kSimd128, rep);
-      __ vldr(kScratchDoubleReg, dst);
-      __ vldr(kDoubleRegZero, src);
-      __ vstr(kScratchDoubleReg, src);
-      __ vstr(kDoubleRegZero, dst);
-      src.set_offset(src.offset() + kDoubleSize);
-      dst.set_offset(dst.offset() + kDoubleSize);
-      __ vldr(kScratchDoubleReg, dst);
-      __ vldr(kDoubleRegZero, src);
-      __ vstr(kScratchDoubleReg, src);
-      __ vstr(kDoubleRegZero, dst);
-      // Restore the 0 register.
-      __ veor(kDoubleRegZero, kDoubleRegZero, kDoubleRegZero);
+      MemOperand src1(src0.rn(), src0.offset() + kDoubleSize);
+      MemOperand dst1(dst0.rn(), dst0.offset() + kDoubleSize);
+      __ vldr(kScratchQuadReg.low(), dst0);
+      __ vldr(kScratchQuadReg.high(), src0);
+      __ vstr(kScratchQuadReg.low(), src0);
+      __ vstr(kScratchQuadReg.high(), dst0);
+      __ vldr(kScratchQuadReg.low(), dst1);
+      __ vldr(kScratchQuadReg.high(), src1);
+      __ vstr(kScratchQuadReg.low(), src1);
+      __ vstr(kScratchQuadReg.high(), dst1);
     }
   } else {
     // No other combinations are possible.

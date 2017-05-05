@@ -2413,8 +2413,7 @@ void MacroAssembler::AssertGeneratorObject(Register object, Register flags) {
   LoadP(map, FieldMemOperand(object, HeapObject::kMapOffset));
 
   Label async, do_check;
-  And(ip, flags, Operand(static_cast<int>(SuspendFlags::kGeneratorTypeMask)));
-  CmpP(ip, Operand(static_cast<int>(SuspendFlags::kGeneratorTypeMask)));
+  tmll(flags, Operand(static_cast<int>(SuspendFlags::kGeneratorTypeMask)));
   bne(&async);
 
   // Check if JSGeneratorObject
@@ -2713,6 +2712,7 @@ void MacroAssembler::CallCFunction(Register function, int num_arguments) {
 void MacroAssembler::CallCFunctionHelper(Register function,
                                          int num_reg_arguments,
                                          int num_double_arguments) {
+  DCHECK_LE(num_reg_arguments + num_double_arguments, kMaxCParameters);
   DCHECK(has_frame());
 
   // Just call directly. The function called cannot cause a GC, or

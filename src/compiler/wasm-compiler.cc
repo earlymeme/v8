@@ -3188,8 +3188,6 @@ Node* WasmGraphBuilder::SimdOp(wasm::WasmOpcode opcode,
       return graph()->NewNode(jsgraph()->machine()->F32x4Abs(), inputs[0]);
     case wasm::kExprF32x4Neg:
       return graph()->NewNode(jsgraph()->machine()->F32x4Neg(), inputs[0]);
-    case wasm::kExprF32x4Sqrt:
-      return graph()->NewNode(jsgraph()->machine()->F32x4Sqrt(), inputs[0]);
     case wasm::kExprF32x4RecipApprox:
       return graph()->NewNode(jsgraph()->machine()->F32x4RecipApprox(),
                               inputs[0]);
@@ -3199,14 +3197,14 @@ Node* WasmGraphBuilder::SimdOp(wasm::WasmOpcode opcode,
     case wasm::kExprF32x4Add:
       return graph()->NewNode(jsgraph()->machine()->F32x4Add(), inputs[0],
                               inputs[1]);
+    case wasm::kExprF32x4AddHoriz:
+      return graph()->NewNode(jsgraph()->machine()->F32x4AddHoriz(), inputs[0],
+                              inputs[1]);
     case wasm::kExprF32x4Sub:
       return graph()->NewNode(jsgraph()->machine()->F32x4Sub(), inputs[0],
                               inputs[1]);
     case wasm::kExprF32x4Mul:
       return graph()->NewNode(jsgraph()->machine()->F32x4Mul(), inputs[0],
-                              inputs[1]);
-    case wasm::kExprF32x4Div:
-      return graph()->NewNode(jsgraph()->machine()->F32x4Div(), inputs[0],
                               inputs[1]);
     case wasm::kExprF32x4Min:
       return graph()->NewNode(jsgraph()->machine()->F32x4Min(), inputs[0],
@@ -3214,12 +3212,6 @@ Node* WasmGraphBuilder::SimdOp(wasm::WasmOpcode opcode,
     case wasm::kExprF32x4Max:
       return graph()->NewNode(jsgraph()->machine()->F32x4Max(), inputs[0],
                               inputs[1]);
-    case wasm::kExprF32x4RecipRefine:
-      return graph()->NewNode(jsgraph()->machine()->F32x4RecipRefine(),
-                              inputs[0], inputs[1]);
-    case wasm::kExprF32x4RecipSqrtRefine:
-      return graph()->NewNode(jsgraph()->machine()->F32x4RecipSqrtRefine(),
-                              inputs[0], inputs[1]);
     case wasm::kExprF32x4Eq:
       return graph()->NewNode(jsgraph()->machine()->F32x4Eq(), inputs[0],
                               inputs[1]);
@@ -3256,6 +3248,9 @@ Node* WasmGraphBuilder::SimdOp(wasm::WasmOpcode opcode,
       return graph()->NewNode(jsgraph()->machine()->I32x4Neg(), inputs[0]);
     case wasm::kExprI32x4Add:
       return graph()->NewNode(jsgraph()->machine()->I32x4Add(), inputs[0],
+                              inputs[1]);
+    case wasm::kExprI32x4AddHoriz:
+      return graph()->NewNode(jsgraph()->machine()->I32x4AddHoriz(), inputs[0],
                               inputs[1]);
     case wasm::kExprI32x4Sub:
       return graph()->NewNode(jsgraph()->machine()->I32x4Sub(), inputs[0],
@@ -3330,6 +3325,9 @@ Node* WasmGraphBuilder::SimdOp(wasm::WasmOpcode opcode,
     case wasm::kExprI16x8AddSaturateS:
       return graph()->NewNode(jsgraph()->machine()->I16x8AddSaturateS(),
                               inputs[0], inputs[1]);
+    case wasm::kExprI16x8AddHoriz:
+      return graph()->NewNode(jsgraph()->machine()->I16x8AddHoriz(), inputs[0],
+                              inputs[1]);
     case wasm::kExprI16x8Sub:
       return graph()->NewNode(jsgraph()->machine()->I16x8Sub(), inputs[0],
                               inputs[1]);
@@ -3605,21 +3603,22 @@ Node* WasmGraphBuilder::SimdShiftOp(wasm::WasmOpcode opcode, uint8_t shift,
   }
 }
 
-Node* WasmGraphBuilder::SimdSwizzleOp(wasm::WasmOpcode opcode, uint32_t swizzle,
+Node* WasmGraphBuilder::SimdShuffleOp(uint8_t shuffle[16], unsigned lanes,
                                       const NodeVector& inputs) {
   has_simd_ = true;
-  switch (opcode) {
-    case wasm::kExprS32x4Swizzle:
-      return graph()->NewNode(jsgraph()->machine()->S32x4Swizzle(swizzle),
-                              inputs[0]);
-    case wasm::kExprS16x8Swizzle:
-      return graph()->NewNode(jsgraph()->machine()->S16x8Swizzle(swizzle),
-                              inputs[0]);
-    case wasm::kExprS8x16Swizzle:
-      return graph()->NewNode(jsgraph()->machine()->S8x16Swizzle(swizzle),
-                              inputs[0]);
+  switch (lanes) {
+    case 4:
+      return graph()->NewNode(jsgraph()->machine()->S32x4Shuffle(shuffle),
+                              inputs[0], inputs[1]);
+    case 8:
+      return graph()->NewNode(jsgraph()->machine()->S16x8Shuffle(shuffle),
+                              inputs[0], inputs[1]);
+    case 16:
+      return graph()->NewNode(jsgraph()->machine()->S8x16Shuffle(shuffle),
+                              inputs[0], inputs[1]);
     default:
-      return graph()->NewNode(UnsupportedOpcode(opcode), nullptr);
+      UNREACHABLE();
+      return nullptr;
   }
 }
 
@@ -3894,7 +3893,7 @@ SourcePositionTable* WasmCompilationUnit::BuildGraphForWasmFunction(
   if (graph_construction_result_.failed()) {
     if (FLAG_trace_wasm_compiler) {
       OFStream os(stdout);
-      os << "Compilation failed: " << graph_construction_result_.error_msg
+      os << "Compilation failed: " << graph_construction_result_.error_msg()
          << std::endl;
     }
     return nullptr;

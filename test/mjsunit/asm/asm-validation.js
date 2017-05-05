@@ -474,8 +474,25 @@ function assertValidAsm(func) {
   assertFalse(o instanceof WebAssembly.Instance);
   assertTrue(o instanceof Object);
   assertTrue(o.__proto__ === Object.prototype);
+  var p = Object.getOwnPropertyDescriptor(o, "x")
+  assertTrue(p.writable);
+  assertTrue(p.enumerable);
+  assertTrue(p.configurable);
+  assertTrue(typeof o.x === 'function');
   o.x = 5;
   assertTrue(typeof o.x === 'number');
   assertTrue(o.__single_function__ === undefined);
   assertTrue(o.__foreign_init__ === undefined);
+})();
+
+(function TestAsmExportOrderPreserved() {
+  function Module() {
+    "use asm";
+    function f() {}
+    return { a:f, b:f, x:f, c:f, d:f };
+  }
+  var m = Module();
+  assertValidAsm(Module);
+  var props = Object.getOwnPropertyNames(m);
+  assertEquals(["a","b","x","c","d"], props);
 })();

@@ -259,8 +259,6 @@ Handle<WasmTableObject> WasmTableObject::New(Isolate* isolate, uint32_t initial,
   return Handle<WasmTableObject>::cast(table_obj);
 }
 
-DEFINE_OBJ_GETTER(WasmTableObject, dispatch_tables, kDispatchTables, FixedArray)
-
 Handle<FixedArray> WasmTableObject::AddDispatchTable(
     Isolate* isolate, Handle<WasmTableObject> table_obj,
     Handle<WasmInstanceObject> instance, int table_index,
@@ -290,6 +288,8 @@ Handle<FixedArray> WasmTableObject::AddDispatchTable(
 
 DEFINE_OBJ_ACCESSORS(WasmTableObject, functions, kFunctions, FixedArray)
 
+DEFINE_OBJ_GETTER(WasmTableObject, dispatch_tables, kDispatchTables, FixedArray)
+
 uint32_t WasmTableObject::current_length() { return functions()->length(); }
 
 bool WasmTableObject::has_maximum_length() {
@@ -306,11 +306,36 @@ WasmTableObject* WasmTableObject::cast(Object* object) {
   return reinterpret_cast<WasmTableObject*>(object);
 }
 
-void WasmTableObject::Grow(Isolate* isolate, Handle<WasmTableObject> table,
-                           uint32_t count) {
-  Handle<FixedArray> dispatch_tables(table->dispatch_tables());
-  wasm::GrowDispatchTables(isolate, dispatch_tables,
-                           table->functions()->length(), count);
+void WasmTableObject::grow(Isolate* isolate, uint32_t count) {
+  Handle<FixedArray> dispatch_tables(
+      FixedArray::cast(GetEmbedderField(kDispatchTables)));
+  DCHECK_EQ(0, dispatch_tables->length() % 4);
+  uint32_t old_size = functions()->length();
+
+  Zone specialization_zone(isolate->allocator(), ZONE_NAME);
+  for (int i = 0; i < dispatch_tables->length(); i += 4) {
+    Handle<FixedArray> old_function_table(
+        FixedArray::cast(dispatch_tables->get(i + 2)));
+    Handle<FixedArray> old_signature_table(
+        FixedArray::cast(dispatch_tables->get(i + 3)));
+    Handle<FixedArray> new_function_table =
+        isolate->factory()->CopyFixedArrayAndGrow(old_function_table, count);
+    Handle<FixedArray> new_signature_table =
+        isolate->factory()->CopyFixedArrayAndGrow(old_signature_table, count);
+
+    // Update dispatch tables with new function/signature tables
+    dispatch_tables->set(i + 2, *new_function_table);
+    dispatch_tables->set(i + 3, *new_signature_table);
+
+    // Patch the code of the respective instance.
+    CodeSpecialization code_specialization(isolate, &specialization_zone);
+    code_specialization.PatchTableSize(old_size, old_size + count);
+    code_specialization.RelocateObject(old_function_table, new_function_table);
+    code_specialization.RelocateObject(old_signature_table,
+                                       new_signature_table);
+    code_specialization.ApplyToWholeInstance(
+        WasmInstanceObject::cast(dispatch_tables->get(i)));
+  }
 }
 
 namespace {
@@ -382,8 +407,9 @@ Handle<WasmMemoryObject> WasmMemoryObject::New(Isolate* isolate,
   Handle<JSObject> memory_obj =
       isolate->factory()->NewJSObject(memory_ctor, TENURED);
   memory_obj->SetEmbedderField(kWrapperTracerHeader, Smi::kZero);
-
-  memory_obj->SetEmbedderField(kArrayBuffer, *buffer);
+  buffer.is_null() ? memory_obj->SetEmbedderField(
+                         kArrayBuffer, isolate->heap()->undefined_value())
+                   : memory_obj->SetEmbedderField(kArrayBuffer, *buffer);
   Handle<Object> max = isolate->factory()->NewNumber(maximum);
   memory_obj->SetEmbedderField(kMaximum, *max);
   Handle<Symbol> memory_sym(isolate->native_context()->wasm_memory_sym());
@@ -391,7 +417,8 @@ Handle<WasmMemoryObject> WasmMemoryObject::New(Isolate* isolate,
   return Handle<WasmMemoryObject>::cast(memory_obj);
 }
 
-DEFINE_OBJ_ACCESSORS(WasmMemoryObject, buffer, kArrayBuffer, JSArrayBuffer)
+DEFINE_OPTIONAL_OBJ_ACCESSORS(WasmMemoryObject, buffer, kArrayBuffer,
+                              JSArrayBuffer)
 DEFINE_OPTIONAL_OBJ_ACCESSORS(WasmMemoryObject, instances_link, kInstancesLink,
                               WasmInstanceWrapper)
 
@@ -438,11 +465,11 @@ void WasmMemoryObject::ResetInstancesLink(Isolate* isolate) {
 int32_t WasmMemoryObject::Grow(Isolate* isolate,
                                Handle<WasmMemoryObject> memory_object,
                                uint32_t pages) {
-  Handle<JSArrayBuffer> old_buffer(memory_object->buffer(), isolate);
+  Handle<JSArrayBuffer> old_buffer;
   uint32_t old_size = 0;
   Address old_mem_start = nullptr;
-  // Force byte_length to 0, if byte_length fails IsNumber() check.
-  if (!old_buffer.is_null()) {
+  if (memory_object->has_buffer()) {
+    old_buffer = handle(memory_object->buffer());
     old_size = old_buffer->byte_length()->Number();
     old_mem_start = static_cast<Address>(old_buffer->backing_store());
   }
@@ -531,7 +558,7 @@ Handle<WasmDebugInfo> WasmInstanceObject::GetOrCreateDebugInfo(
     Handle<WasmInstanceObject> instance) {
   if (instance->has_debug_info()) return handle(instance->debug_info());
   Handle<WasmDebugInfo> new_info = WasmDebugInfo::New(instance);
-  instance->set_debug_info(*new_info);
+  DCHECK(instance->has_debug_info());
   return new_info;
 }
 
@@ -627,10 +654,9 @@ uint32_t WasmInstanceObject::GetMaxMemoryPages() {
   }
   uint32_t compiled_max_pages = compiled_module()->module()->max_mem_pages;
   Isolate* isolate = GetIsolate();
-  auto* histogram = (compiled_module()->module()->is_wasm()
-                         ? isolate->counters()->wasm_wasm_max_mem_pages_count()
-                         : isolate->counters()->wasm_asm_max_mem_pages_count());
-  histogram->AddSample(compiled_max_pages);
+  assert(compiled_module()->module()->is_wasm());
+  isolate->counters()->wasm_wasm_max_mem_pages_count()->AddSample(
+      compiled_max_pages);
   if (compiled_max_pages != 0) return compiled_max_pages;
   return FLAG_wasm_max_mem_pages;
 }

@@ -441,19 +441,15 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* F32x4UConvertI32x4();
   const Operator* F32x4Abs();
   const Operator* F32x4Neg();
-  const Operator* F32x4Sqrt();
   const Operator* F32x4RecipApprox();
   const Operator* F32x4RecipSqrtApprox();
   const Operator* F32x4Add();
+  const Operator* F32x4AddHoriz();
   const Operator* F32x4Sub();
   const Operator* F32x4Mul();
   const Operator* F32x4Div();
   const Operator* F32x4Min();
   const Operator* F32x4Max();
-  const Operator* F32x4MinNum();
-  const Operator* F32x4MaxNum();
-  const Operator* F32x4RecipRefine();
-  const Operator* F32x4RecipSqrtRefine();
   const Operator* F32x4Eq();
   const Operator* F32x4Ne();
   const Operator* F32x4Lt();
@@ -469,6 +465,7 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* I32x4Shl(int32_t);
   const Operator* I32x4ShrS(int32_t);
   const Operator* I32x4Add();
+  const Operator* I32x4AddHoriz();
   const Operator* I32x4Sub();
   const Operator* I32x4Mul();
   const Operator* I32x4MinS();
@@ -498,6 +495,7 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* I16x8SConvertI32x4();
   const Operator* I16x8Add();
   const Operator* I16x8AddSaturateS();
+  const Operator* I16x8AddHoriz();
   const Operator* I16x8Sub();
   const Operator* I16x8SubSaturateS();
   const Operator* I16x8Mul();
@@ -556,15 +554,12 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* S128Xor();
   const Operator* S128Not();
 
+  const Operator* S32x4Shuffle(uint8_t shuffle[16]);
   const Operator* S32x4Select();
-  const Operator* S32x4Swizzle(uint32_t);
-  const Operator* S32x4Shuffle();
+  const Operator* S16x8Shuffle(uint8_t shuffle[16]);
   const Operator* S16x8Select();
-  const Operator* S16x8Swizzle(uint32_t);
-  const Operator* S16x8Shuffle();
+  const Operator* S8x16Shuffle(uint8_t shuffle[16]);
   const Operator* S8x16Select();
-  const Operator* S8x16Swizzle(uint32_t);
-  const Operator* S8x16Shuffle();
 
   const Operator* S1x4Zero();
   const Operator* S1x4And();
