@@ -67,6 +67,7 @@ class CompilationHandleScope final {
 };
 
 // Helper that times a scoped region and records the elapsed time.
+// 启动计时器标记scoped区域，记录消耗时间
 struct ScopedTimer {
   explicit ScopedTimer(base::TimeDelta* location) : location_(location) {
     DCHECK(location_ != NULL);
@@ -75,13 +76,13 @@ struct ScopedTimer {
 
   ~ScopedTimer() { *location_ += timer_.Elapsed(); }
 
-  base::ElapsedTimer timer_;
-  base::TimeDelta* location_;
+  base::ElapsedTimer timer_;// tik-tok时钟
+  base::TimeDelta* location_;// 时长，ms表示
 };
 
 // ----------------------------------------------------------------------------
 // Implementation of CompilationJob
-
+// 编译任务
 CompilationJob::CompilationJob(Isolate* isolate, CompilationInfo* info,
                                const char* compiler_name, State initial_state)
     : info_(info),
@@ -90,7 +91,7 @@ CompilationJob::CompilationJob(Isolate* isolate, CompilationInfo* info,
       state_(initial_state),
       stack_limit_(isolate->stack_guard()->real_climit()),
       executed_on_background_thread_(false) {}
-
+// 准备工作
 CompilationJob::Status CompilationJob::PrepareJob() {
   DCHECK(ThreadId::Current().Equals(info()->isolate()->thread_id()));
   DisallowJavascriptExecution no_js(isolate());
@@ -108,7 +109,7 @@ CompilationJob::Status CompilationJob::PrepareJob() {
   ScopedTimer t(&time_taken_to_prepare_);
   return UpdateState(PrepareJobImpl(), State::kReadyToExecute);
 }
-
+// 执行任务
 CompilationJob::Status CompilationJob::ExecuteJob() {
   std::unique_ptr<DisallowHeapAllocation> no_allocation;
   std::unique_ptr<DisallowHandleAllocation> no_handles;
@@ -130,7 +131,7 @@ CompilationJob::Status CompilationJob::ExecuteJob() {
   ScopedTimer t(&time_taken_to_execute_);
   return UpdateState(ExecuteJobImpl(), State::kReadyToFinalize);
 }
-
+// 完成任务
 CompilationJob::Status CompilationJob::FinalizeJob() {
   DCHECK(ThreadId::Current().Equals(info()->isolate()->thread_id()));
   DisallowCodeDependencyChange no_dependency_change;
@@ -142,21 +143,21 @@ CompilationJob::Status CompilationJob::FinalizeJob() {
   ScopedTimer t(&time_taken_to_finalize_);
   return UpdateState(FinalizeJobImpl(), State::kSucceeded);
 }
-
+// 重试优化
 CompilationJob::Status CompilationJob::RetryOptimization(BailoutReason reason) {
   DCHECK(info_->IsOptimizing());
   info_->RetryOptimization(reason);
   state_ = State::kFailed;
   return FAILED;
 }
-
+// 取消优化
 CompilationJob::Status CompilationJob::AbortOptimization(BailoutReason reason) {
   DCHECK(info_->IsOptimizing());
   info_->AbortOptimization(reason);
   state_ = State::kFailed;
   return FAILED;
 }
-
+// 记录没有优化的编译状态
 void CompilationJob::RecordUnoptimizedCompilationStats() const {
   int code_size;
   if (info()->has_bytecode_array()) {
@@ -172,7 +173,7 @@ void CompilationJob::RecordUnoptimizedCompilationStats() const {
 
   // TODO(5203): Add timers for each phase of compilation.
 }
-
+// 记录优化过的编译状态
 void CompilationJob::RecordOptimizedCompilationStats() const {
   DCHECK(info()->IsOptimizing());
   Handle<JSFunction> function = info()->closure();
@@ -207,11 +208,11 @@ void CompilationJob::RecordOptimizedCompilationStats() const {
                                                     time_taken_to_finalize_);
   }
 }
-
+// 返回CompilationInfo的isolate环境
 Isolate* CompilationJob::isolate() const { return info()->isolate(); }
 
 namespace {
-
+// 把弱对象加到代码依赖里
 void AddWeakObjectToCodeDependency(Isolate* isolate, Handle<HeapObject> object,
                                    Handle<Code> code) {
   Handle<WeakCell> cell = Code::WeakCellFor(code);
@@ -227,7 +228,7 @@ void AddWeakObjectToCodeDependency(Isolate* isolate, Handle<HeapObject> object,
 }
 
 }  // namespace
-
+// 在优化过的代码里注册弱对象
 void CompilationJob::RegisterWeakObjectsInOptimizedCode(Handle<Code> code) {
   // TODO(turbofan): Move this to pipeline.cc once Crankshaft dies.
   Isolate* const isolate = code->GetIsolate();
@@ -270,9 +271,9 @@ void CompilationJob::RegisterWeakObjectsInOptimizedCode(Handle<Code> code) {
 
 // ----------------------------------------------------------------------------
 // Local helper methods that make up the compilation pipeline.
-
+// 本地帮助方法，组建编译流程管道
 namespace {
-
+// 记录函数编译信息CompilationInfo
 void RecordFunctionCompilation(CodeEventListener::LogEventsAndTags tag,
                                CompilationInfo* info) {
   // Log the code generation. If source information is available include
@@ -303,7 +304,7 @@ void RecordFunctionCompilation(CodeEventListener::LogEventsAndTags tag,
                             line_num, column_num));
   }
 }
-
+// 确保编译信息里有类型反馈元数据
 void EnsureFeedbackMetadata(CompilationInfo* info) {
   DCHECK(info->has_shared_info());
 
@@ -325,7 +326,7 @@ void EnsureFeedbackMetadata(CompilationInfo* info) {
   CHECK(!info->shared_info()->feedback_metadata()->SpecDiffersFrom(
       info->literal()->feedback_vector_spec()));
 }
-
+// 是否使用TF编译器
 bool UseTurboFan(Handle<SharedFunctionInfo> shared) {
   bool must_use_ignition_turbo = shared->must_use_ignition_turbo();
 
@@ -343,7 +344,7 @@ bool UseTurboFan(Handle<SharedFunctionInfo> shared) {
   return is_turbofanable_asm || is_unsupported_by_crankshaft_but_turbofanable ||
          passes_turbo_filter;
 }
-
+// 是否应该使用Ignition字节码解释器
 bool ShouldUseIgnition(Handle<SharedFunctionInfo> shared,
                        bool marked_as_debug) {
   // Code which can't be supported by the old pipeline should use Ignition.
@@ -368,12 +369,12 @@ bool ShouldUseIgnition(Handle<SharedFunctionInfo> shared,
   // Only use Ignition for any other function if FLAG_ignition is true.
   return FLAG_ignition;
 }
-
+// 是否应该使用Ignition字节码解释器（同上，重载版本）
 bool ShouldUseIgnition(CompilationInfo* info) {
   DCHECK(info->has_shared_info());
   return ShouldUseIgnition(info->shared_info(), info->is_debug());
 }
-
+// 使用AsmWasm
 bool UseAsmWasm(DeclarationScope* scope, Handle<SharedFunctionInfo> shared_info,
                 bool is_debug) {
   // Check whether asm.js validation is enabled.
@@ -392,7 +393,16 @@ bool UseAsmWasm(DeclarationScope* scope, Handle<SharedFunctionInfo> shared_info,
   // In general, we respect the "use asm" directive.
   return scope->asm_module();
 }
-
+/**
+ * 使用编译器调度程序
+ * @param {inner_function_mode} 编译器并发模式
+ * @param {CompilerDispatcher} dispatcher 调度程序
+ * @param {DeclarationScope} scope 调度程序
+ * @param {SharedFunctionInfo} shared_info 共享信息
+ * @param {bool} is_debug
+ * @param {bool} will_serialize
+ * @return {bool}
+ */
 bool UseCompilerDispatcher(Compiler::ConcurrencyMode inner_function_mode,
                            CompilerDispatcher* dispatcher,
                            DeclarationScope* scope,
@@ -403,6 +413,11 @@ bool UseCompilerDispatcher(Compiler::ConcurrencyMode inner_function_mode,
          !UseAsmWasm(scope, shared_info, is_debug);
 }
 
+/**
+ * 获取未优化的编译任务
+ * @param {CompilationInfo} info 编译信息
+ * @return {CompilationJob*}
+ */
 CompilationJob* GetUnoptimizedCompilationJob(CompilationInfo* info) {
   // Function should have been parsed and analyzed before creating a compilation
   // job.
@@ -416,6 +431,12 @@ CompilationJob* GetUnoptimizedCompilationJob(CompilationInfo* info) {
   }
 }
 
+/**
+ * 安装共享作用域信息
+ * @param {CompilationInfo} 编译对象
+ * @param {SharedFunctionInfo} 共享Function对象
+ * @return {void}
+ */
 void InstallSharedScopeInfo(CompilationInfo* info,
                             Handle<SharedFunctionInfo> shared) {
   Handle<ScopeInfo> scope_info = info->scope()->scope_info();
@@ -426,6 +447,12 @@ void InstallSharedScopeInfo(CompilationInfo* info,
   }
 }
 
+/**
+ * 安装共享的编译结果
+ * @param {CompilationInfo} info 编译对象
+ * @param {SharedFunctionInfo} shared Function对象
+ * @return {void}
+ */
 void InstallSharedCompilationResult(CompilationInfo* info,
                                     Handle<SharedFunctionInfo> shared) {
   // TODO(mstarzinger): Compiling for debug code might be used to reveal inner
@@ -442,6 +469,11 @@ void InstallSharedCompilationResult(CompilationInfo* info,
   }
 }
 
+/**
+ * 未优化的代码
+ * @param {CompilationInfo} info
+ * @return {void}
+ */
 void InstallUnoptimizedCode(CompilationInfo* info) {
   Handle<SharedFunctionInfo> shared = info->shared_info();
 
@@ -451,7 +483,11 @@ void InstallUnoptimizedCode(CompilationInfo* info) {
   // Install compilation result on the shared function info
   InstallSharedCompilationResult(info, shared);
 }
-
+/**
+ * 完成未优化的编译任务
+ * @param {CompilationJob} job 编译任务
+ * @return {CompilationJob::Status} 状态
+ */
 CompilationJob::Status FinalizeUnoptimizedCompilationJob(CompilationJob* job) {
   CompilationJob::Status status = job->FinalizeJob();
   if (status == CompilationJob::SUCCEEDED) {
@@ -468,6 +504,12 @@ CompilationJob::Status FinalizeUnoptimizedCompilationJob(CompilationJob* job) {
   return status;
 }
 
+/**
+ * 根据literal，设置共享Function标志位，
+ * @param {FunctionLiteral} literal
+ * @param {SharedFunctionInfo} shared_info
+ * @return {void}
+ */
 void SetSharedFunctionFlagsFromLiteral(FunctionLiteral* literal,
                                        Handle<SharedFunctionInfo> shared_info) {
   // Don't overwrite values set by the bootstrapper.
@@ -486,6 +528,12 @@ void SetSharedFunctionFlagsFromLiteral(FunctionLiteral* literal,
   }
 }
 
+/**
+ * 标数
+ * @param {ParseInfo} parse_info 解析对象
+ * @param {EagerInnerFunctionLiterals} eager_literals
+ * @return {bool}
+ */
 bool Renumber(ParseInfo* parse_info,
               Compiler::EagerInnerFunctionLiterals* eager_literals) {
   RuntimeCallTimerScope runtimeTimer(parse_info->runtime_call_stats(),
@@ -515,7 +563,7 @@ bool Renumber(ParseInfo* parse_info,
   }
   return true;
 }
-
+// 生成未优化的代码
 bool GenerateUnoptimizedCode(CompilationInfo* info) {
   if (UseAsmWasm(info->scope(), info->shared_info(), info->is_debug())) {
     EnsureFeedbackMetadata(info);
@@ -538,7 +586,7 @@ bool GenerateUnoptimizedCode(CompilationInfo* info) {
   }
   return true;
 }
-
+// 编译未优化的内部函数
 bool CompileUnoptimizedInnerFunctions(
     Compiler::EagerInnerFunctionLiterals* literals,
     Compiler::ConcurrencyMode inner_function_mode,
@@ -598,7 +646,7 @@ bool CompileUnoptimizedInnerFunctions(
   }
   return true;
 }
-
+// 内部函数是否是asm模块
 bool InnerFunctionIsAsmModule(
     ThreadedList<ThreadedListZoneEntry<FunctionLiteral*>>* literals) {
   for (auto it : *literals) {
@@ -607,7 +655,7 @@ bool InnerFunctionIsAsmModule(
   }
   return false;
 }
-
+// 编译未优化的代码
 bool CompileUnoptimizedCode(CompilationInfo* info,
                             Compiler::ConcurrencyMode inner_function_mode) {
   Isolate* isolate = info->isolate();
@@ -651,7 +699,7 @@ bool CompileUnoptimizedCode(CompilationInfo* info,
 
   return true;
 }
-
+// 设置共享函数对象
 void EnsureSharedFunctionInfosArrayOnScript(ParseInfo* info, Isolate* isolate) {
   DCHECK(info->is_toplevel());
   DCHECK(!info->script().is_null());
@@ -669,7 +717,7 @@ void EnsureSharedFunctionInfosArrayOnScript(CompilationInfo* info) {
   return EnsureSharedFunctionInfosArrayOnScript(info->parse_info(),
                                                 info->isolate());
 }
-
+// 获得未优化的代码
 MUST_USE_RESULT MaybeHandle<Code> GetUnoptimizedCode(
     CompilationInfo* info, Compiler::ConcurrencyMode inner_function_mode) {
   RuntimeCallTimerScope runtimeTimer(
@@ -707,7 +755,12 @@ MUST_USE_RESULT MaybeHandle<Code> GetUnoptimizedCode(
 
   return info->code();
 }
-
+/**
+ * 获得未优化的代码映射
+ * @param {JSFunction} function js函数
+ * @param {BailoutId} osr_ast_id
+ * @return {Code}
+ */
 MUST_USE_RESULT MaybeHandle<Code> GetCodeFromOptimizedCodeCache(
     Handle<JSFunction> function, BailoutId osr_ast_id) {
   RuntimeCallTimerScope runtimeTimer(
@@ -732,7 +785,7 @@ MUST_USE_RESULT MaybeHandle<Code> GetCodeFromOptimizedCodeCache(
   }
   return MaybeHandle<Code>();
 }
-
+// 插入代码
 void InsertCodeIntoOptimizedCodeCache(CompilationInfo* info) {
   Handle<Code> code = info->code();
   if (code->kind() != Code::OPTIMIZED_FUNCTION) return;  // Nothing to do.
@@ -756,7 +809,7 @@ void InsertCodeIntoOptimizedCodeCache(CompilationInfo* info) {
                                         info->osr_ast_id());
   }
 }
-
+// 现在得到优化的代码
 bool GetOptimizedCodeNow(CompilationJob* job) {
   CompilationInfo* info = job->info();
   Isolate* isolate = info->isolate();
@@ -793,7 +846,7 @@ bool GetOptimizedCodeNow(CompilationJob* job) {
   RecordFunctionCompilation(CodeEventListener::LAZY_COMPILE_TAG, info);
   return true;
 }
-
+// 之后得到优化的代码
 bool GetOptimizedCodeLater(CompilationJob* job) {
   CompilationInfo* info = job->info();
   Isolate* isolate = info->isolate();
@@ -851,7 +904,7 @@ bool GetOptimizedCodeLater(CompilationJob* job) {
   }
   return true;
 }
-
+// 得到优化的代码
 MaybeHandle<Code> GetOptimizedCode(Handle<JSFunction> function,
                                    Compiler::ConcurrencyMode mode,
                                    BailoutId osr_ast_id = BailoutId::None(),
@@ -970,14 +1023,14 @@ MaybeHandle<Code> GetOptimizedCode(Handle<JSFunction> function,
   if (isolate->has_pending_exception()) isolate->clear_pending_exception();
   return MaybeHandle<Code>();
 }
-
+// 得到优化的代码，可能之后
 MaybeHandle<Code> GetOptimizedCodeMaybeLater(Handle<JSFunction> function) {
   Isolate* isolate = function->GetIsolate();
   return GetOptimizedCode(function, isolate->concurrent_recompilation_enabled()
                                         ? Compiler::CONCURRENT
                                         : Compiler::NOT_CONCURRENT);
 }
-
+// 完成优化过的编译任务
 CompilationJob::Status FinalizeOptimizedCompilationJob(CompilationJob* job) {
   CompilationInfo* info = job->info();
   Isolate* isolate = info->isolate();
@@ -1037,7 +1090,7 @@ CompilationJob::Status FinalizeOptimizedCompilationJob(CompilationJob* job) {
   info->closure()->ReplaceCode(shared->code());
   return CompilationJob::FAILED;
 }
-
+// lazycode
 MaybeHandle<Code> GetLazyCode(Handle<JSFunction> function) {
   Isolate* isolate = function->GetIsolate();
   DCHECK(!isolate->has_pending_exception());
@@ -1117,7 +1170,7 @@ MaybeHandle<Code> GetLazyCode(Handle<JSFunction> function) {
   return result;
 }
 
-
+// 编译顶层
 Handle<SharedFunctionInfo> CompileToplevel(CompilationInfo* info) {
   Isolate* isolate = info->isolate();
   TimerEventScope<TimerEventCompileCode> timer(isolate);
@@ -1205,7 +1258,8 @@ Handle<SharedFunctionInfo> CompileToplevel(CompilationInfo* info) {
 
 // ----------------------------------------------------------------------------
 // Implementation of Compiler
-
+// 编译器实现
+// 分析
 bool Compiler::Analyze(ParseInfo* info, Isolate* isolate,
                        EagerInnerFunctionLiterals* eager_literals) {
   DCHECK_NOT_NULL(info->literal());
@@ -1224,7 +1278,7 @@ bool Compiler::Analyze(CompilationInfo* info,
                        EagerInnerFunctionLiterals* eager_literals) {
   return Compiler::Analyze(info->parse_info(), info->isolate(), eager_literals);
 }
-
+// 解析，分析
 bool Compiler::ParseAndAnalyze(ParseInfo* info, Isolate* isolate) {
   if (!parsing::ParseAny(info, isolate)) return false;
   if (info->is_toplevel()) {
@@ -1303,7 +1357,7 @@ bool Compiler::CompileOptimized(Handle<JSFunction> function,
   DCHECK(function->is_compiled());
   return true;
 }
-
+// 编译debug代码
 bool Compiler::CompileDebugCode(Handle<SharedFunctionInfo> shared) {
   Isolate* isolate = shared->GetIsolate();
   DCHECK(AllowCompilation::IsAllowed(isolate));
@@ -1324,7 +1378,7 @@ bool Compiler::CompileDebugCode(Handle<SharedFunctionInfo> shared) {
   DCHECK(shared->HasDebugCode());
   return true;
 }
-
+// 支持实时编辑
 MaybeHandle<JSArray> Compiler::CompileForLiveEdit(Handle<Script> script) {
   Isolate* isolate = script->GetIsolate();
   DCHECK(AllowCompilation::IsAllowed(isolate));
@@ -1360,7 +1414,7 @@ MaybeHandle<JSArray> Compiler::CompileForLiveEdit(Handle<Script> script) {
 
   return infos;
 }
-
+// 保证字节码存在
 bool Compiler::EnsureBytecode(CompilationInfo* info) {
   if (!info->shared_info()->is_compiled()) {
     CompilerDispatcher* dispatcher = info->isolate()->compiler_dispatcher();
@@ -1380,6 +1434,8 @@ bool Compiler::EnsureBytecode(CompilationInfo* info) {
 
 // TODO(turbofan): In the future, unoptimized code with deopt support could
 // be generated lazily once deopt is triggered.
+// 一旦开启deopt，未优化的代码惰性生成
+// 保证去优化支持
 bool Compiler::EnsureDeoptimizationSupport(CompilationInfo* info) {
   DCHECK_NOT_NULL(info->literal());
   DCHECK_NOT_NULL(info->scope());
@@ -1434,7 +1490,7 @@ bool Compiler::EnsureDeoptimizationSupport(CompilationInfo* info) {
   }
   return true;
 }
-
+// 处理eval里的Function
 MaybeHandle<JSFunction> Compiler::GetFunctionFromEval(
     Handle<String> source, Handle<SharedFunctionInfo> outer_info,
     Handle<Context> context, LanguageMode language_mode,
@@ -1546,7 +1602,7 @@ MaybeHandle<JSFunction> Compiler::GetFunctionFromEval(
 }
 
 namespace {
-
+// 字符串生成代码
 bool CodeGenerationFromStringsAllowed(Isolate* isolate,
                                       Handle<Context> context) {
   DCHECK(context->allow_code_gen_from_strings()->IsFalse(isolate));
@@ -1562,7 +1618,7 @@ bool CodeGenerationFromStringsAllowed(Isolate* isolate,
     return callback(v8::Utils::ToLocal(context));
   }
 }
-
+// 包含Asm模块
 bool ContainsAsmModule(Handle<Script> script) {
   DisallowHeapAllocation no_gc;
   SharedFunctionInfo::ScriptIterator iter(script);
@@ -1573,7 +1629,11 @@ bool ContainsAsmModule(Handle<Script> script) {
 }
 
 }  // namespace
-
+/**
+ * 从字符串得到Function
+ * @param {String} source 源码
+ * @return {JSFunction} js函数
+ */
 MaybeHandle<JSFunction> Compiler::GetFunctionFromString(
     Handle<Context> context, Handle<String> source,
     ParseRestriction restriction, int parameters_end_pos) {
@@ -1599,7 +1659,12 @@ MaybeHandle<JSFunction> Compiler::GetFunctionFromString(
                                        SLOPPY, restriction, parameters_end_pos,
                                        eval_scope_position, eval_position);
 }
-
+/**
+ * 获取共享Function对象
+ * @param {String} source 源码
+ * @param {Object} script_name 脚本名
+ * @return {SharedFunctionInfo} 共享Function对象
+ */
 Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForScript(
     Handle<String> source, Handle<Object> script_name, int line_offset,
     int column_offset, ScriptOriginOptions resource_options,
@@ -1724,6 +1789,11 @@ Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForScript(
     parse_info.set_language_mode(
         static_cast<LanguageMode>(parse_info.language_mode() | language_mode));
     result = CompileToplevel(&info);
+    printf("Compiler::GetSharedFunctionInfoForScript:\n");
+    result->Print();
+    printf("script_name:");
+    script_name->Print();
+    printf("Compiler::GetSharedFunctionInfoForScript...\n");
     if (extension == NULL && !result.is_null()) {
       // We need a feedback vector.
       DCHECK(result->is_compiled());
@@ -1761,7 +1831,13 @@ Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForScript(
   }
   return result;
 }
-
+/**
+ * 处理流式的脚本源码，得到共享Function对象
+ * @param {Script} script 脚本对象
+ * @param {ParseInfo} parse_info 解析对象
+ * @param {int} source_length 长度
+ * @return {SharedFunctionInfo}
+ */
 Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForStreamedScript(
     Handle<Script> script, ParseInfo* parse_info, int source_length) {
   Isolate* isolate = script->GetIsolate();
@@ -1784,7 +1860,7 @@ Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForStreamedScript(
   if (!result.is_null()) isolate->debug()->OnAfterCompile(script);
   return result;
 }
-
+// 得到共享Function对象
 Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfo(
     FunctionLiteral* literal, Handle<Script> script,
     CompilationInfo* outer_info) {
@@ -1812,7 +1888,7 @@ Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfo(
   }
   return result;
 }
-
+// 处理原生的函数
 Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForNative(
     v8::Extension* extension, Handle<String> name) {
   Isolate* isolate = name->GetIsolate();
@@ -1844,7 +1920,7 @@ Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForNative(
 
   return shared;
 }
-
+// 针对栈上替换
 MaybeHandle<Code> Compiler::GetOptimizedCodeForOSR(Handle<JSFunction> function,
                                                    BailoutId osr_ast_id,
                                                    JavaScriptFrame* osr_frame) {
@@ -1852,7 +1928,7 @@ MaybeHandle<Code> Compiler::GetOptimizedCodeForOSR(Handle<JSFunction> function,
   DCHECK_NOT_NULL(osr_frame);
   return GetOptimizedCode(function, NOT_CONCURRENT, osr_ast_id, osr_frame);
 }
-
+// 预准备未优化的编译任务
 CompilationJob* Compiler::PrepareUnoptimizedCompilationJob(
     CompilationInfo* info) {
   VMState<COMPILER> state(info->isolate());
@@ -1862,7 +1938,7 @@ CompilationJob* Compiler::PrepareUnoptimizedCompilationJob(
   }
   return job.release();
 }
-
+// 完成编译任务
 bool Compiler::FinalizeCompilationJob(CompilationJob* raw_job) {
   // Take ownership of compilation job.  Deleting job also tears down the zone.
   std::unique_ptr<CompilationJob> job(raw_job);
@@ -1876,7 +1952,7 @@ bool Compiler::FinalizeCompilationJob(CompilationJob* raw_job) {
            CompilationJob::SUCCEEDED;
   }
 }
-
+// 安装完成后的操作
 void Compiler::PostInstantiation(Handle<JSFunction> function,
                                  PretenureFlag pretenure) {
   Handle<SharedFunctionInfo> shared(function->shared());
