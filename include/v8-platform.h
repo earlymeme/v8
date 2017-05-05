@@ -58,6 +58,9 @@ class ConvertableToTraceFormat {
  * The embedder has to provide an implementation of this interface before
  * initializing the rest of V8.
  */
+/**
+ * Platform用来管理isolate，确定他是在后台线程还是前台线程运行，管理线程池等。
+ */
 class Platform {
  public:
   /**

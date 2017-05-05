@@ -1958,9 +1958,6 @@ void Compiler::PostInstantiation(Handle<JSFunction> function,
     DCHECK(function->shared()->is_compiled());
     function->ReplaceCode(code);
   }
-  printf("Compiler::PostInstantiation\n");
-  function->Print();
-  printf("Compiler::PostInstantiation-----\n");
   if (shared->is_compiled()) {
     // TODO(mvstanton): pass pretenure flag to EnsureLiterals.
     JSFunction::EnsureLiterals(function);

@@ -6521,6 +6521,11 @@ typedef DeserializeInternalFieldsCallback DeserializeEmbedderFieldsCallback;
  * thread at any given time.  The Locker/Unlocker API must be used to
  * synchronize.
  */
+/**
+ * 表示一个单独的v8引擎实例，
+ * Isolate有完全独立的状态，对象在isolate之间不能共享。
+ * 我们可以创建多个isolate，然后再不同的线程中使用。isolate在一个时刻只能由一个线程执行，多线程时必须加锁保证同步。
+ */
 class V8_EXPORT Isolate {
  public:
   /**
