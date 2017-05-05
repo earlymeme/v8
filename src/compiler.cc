@@ -1789,11 +1789,11 @@ Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForScript(
     parse_info.set_language_mode(
         static_cast<LanguageMode>(parse_info.language_mode() | language_mode));
     result = CompileToplevel(&info);
-    printf("Compiler::GetSharedFunctionInfoForScript:\n");
-    result->Print();
-    printf("script_name:");
-    script_name->Print();
-    printf("Compiler::GetSharedFunctionInfoForScript...\n");
+//    printf("Compiler::GetSharedFunctionInfoForScript:\n");
+//    result->Print();
+//    printf("script_name:");
+//    script_name->Print();
+//    printf("Compiler::GetSharedFunctionInfoForScript...\n");
     if (extension == NULL && !result.is_null()) {
       // We need a feedback vector.
       DCHECK(result->is_compiled());
