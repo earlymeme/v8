@@ -34,6 +34,7 @@ TEST(InterpreterReturn) {
   Isolate* isolate = handles.main_isolate();
   Zone* zone = handles.main_zone();
   Handle<Object> undefined_value = isolate->factory()->undefined_value();
+  undefined_value->Print();
 
   BytecodeArrayBuilder builder(isolate, zone, 1, 0, 0);
   builder.Return();
@@ -72,6 +73,9 @@ TEST(InterpreterLoadNull) {
   BytecodeArrayBuilder builder(isolate, zone, 1, 0, 0);
   builder.LoadNull().Return();
   Handle<BytecodeArray> bytecode_array = builder.ToBytecodeArray(isolate);
+  printf("InterpreterLoadNull bytecode_array\n");
+  bytecode_array->Print();
+  printf("InterpreterLoadNull bytecode_array\n");
 
   InterpreterTester tester(isolate, bytecode_array);
   auto callable = tester.GetCallable<>();
@@ -2358,6 +2362,8 @@ TEST(InterpreterFunctionLiteral) {
 
   Handle<i::Object> return_val = callable(
       Handle<Smi>(Smi::FromInt(3), handles.main_isolate())).ToHandleChecked();
+  printf("InterpreterFunctionLiteral:");
+  Smi::FromInt(3)->value();
   CHECK_EQ(Smi::cast(*return_val), Smi::FromInt(5));
 }
 

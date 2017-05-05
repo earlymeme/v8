@@ -751,6 +751,9 @@ function InnerArraySort(array, length, comparefn) {
     t_array.sort(function(a, b) {
       return comparefn(a[1], b[1]);
     });
+
+    %GlobalPrint(t_array.join(','));
+
     var third_index = t_array[t_array.length >> 1][0];
     return third_index;
   }
@@ -979,7 +982,6 @@ function InnerArraySort(array, length, comparefn) {
     // that is safe in the presence of accessors.
     num_non_undefined = SafeRemoveArrayHoles(array);
   }
-
   QuickSort(array, 0, num_non_undefined);
 
   if (!is_array && (num_non_undefined + 1 < max_prototype_element)) {

@@ -668,6 +668,8 @@ void BytecodeGenerator::AllocateDeferredConstants(Isolate* isolate) {
     if (declarations.is_null()) return SetStackOverflow();
     builder()->SetDeferredConstantPoolEntry(
         globals_builder->constant_pool_entry(), declarations);
+    printf("BytecodeGenerator::AllocateDeferredConstants declarations print: \n");
+    declarations->Print();
   }
 
   // Find or build shared function infos.
@@ -1024,6 +1026,7 @@ void BytecodeGenerator::VisitDeclarations(Declaration::List* declarations) {
   for (Declaration* decl : *declarations) {
     RegisterAllocationScope register_scope(this);
     Visit(decl);
+    printf("BytecodeGenerator::VisitDeclarations decl: \n");
     decl->Print();
   }
   if (globals_builder()->empty()) return;

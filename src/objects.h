@@ -6947,6 +6947,7 @@ class JSFunction: public JSObject {
   DECL_ACCESSORS(next_function_link, Object)
 
   // Prints the name of the function using PrintF.
+  // 打印函数名
   void PrintName(FILE* out = stdout);
 
   DECLARE_CAST(JSFunction)

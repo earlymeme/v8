@@ -386,6 +386,7 @@ static inline v8::Local<v8::Script> CompileWithOrigin(const char* source,
 
 
 // Helper functions that compile and run the source.
+// 编译,运行源码
 static inline v8::MaybeLocal<v8::Value> CompileRun(
     v8::Local<v8::Context> context, const char* source) {
   return v8::Script::Compile(context, v8_str(source))
@@ -590,6 +591,7 @@ class HandleAndZoneScope : public InitializedHandleScope {
   ~HandleAndZoneScope();
 
   // Prefixing the below with main_ reduces a lot of naming clashes.
+  // 加前缀main_,减少命名冲突
   i::Zone* main_zone() { return main_zone_.get(); }
 
  private:

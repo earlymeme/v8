@@ -29,10 +29,12 @@ class Zone;
 
 // CompilationInfo encapsulates some information known at compile time.  It
 // is constructed based on the resources available at compile-time.
+// 封装了一些在编译期知道的信息。
 class V8_EXPORT_PRIVATE CompilationInfo final {
  public:
   // Various configuration flags for a compilation, as well as some properties
   // of the compiled code produced by a compilation.
+  // 编译的配置标志和一些编译产生的已编译的代码的属性
   enum Flag {
     kDeferredCalling = 1 << 0,
     kNonDeferredCalling = 1 << 1,

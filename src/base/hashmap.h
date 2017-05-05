@@ -18,6 +18,7 @@
 namespace v8 {
 namespace base {
 
+//  默认的策略分配内存
 class DefaultAllocationPolicy {
  public:
   V8_INLINE void* New(size_t size) { return malloc(size); }
@@ -383,6 +384,7 @@ struct HashEqualityThenKeyMatcher {
 };
 
 // Hashmap<void*, void*> which takes a custom key comparison function pointer.
+// Hashmap<void*, void*>采用自定义key比较函数指针
 template <typename AllocationPolicy>
 class CustomMatcherTemplateHashMapImpl
     : public TemplateHashMapImpl<
@@ -416,6 +418,7 @@ typedef CustomMatcherTemplateHashMapImpl<DefaultAllocationPolicy>
     CustomMatcherHashMap;
 
 // Match function which compares keys directly by equality.
+// 比较key,匹配
 template <typename Key>
 struct KeyEqualityMatcher {
   bool operator()(uint32_t hash1, uint32_t hash2, const Key& key1,

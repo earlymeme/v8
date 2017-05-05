@@ -128,10 +128,14 @@ TEST(LibSamplerCollectSample) {
   v8::Local<v8::Object> instance =
       func->NewInstance(env.local()).ToLocalChecked();
   env->Global()->Set(env.local(), v8_str("instance"), instance).FromJust();
-
+  Local<String> cc = instance->GetConstructorName();
+  cc->ToString();
   CompileRun(sampler_test_source);
   v8::Local<v8::Function> function = GetFunction(env.local(), "start");
-
+  if(function->IsFunction()) printf("haha\n");
+  v8::Local<v8::Value> name = function->GetName();
+  if (!name->IsString() || !v8::Local<v8::String>::Cast(name)->Length())
+    name = function->GetInferredName();
   int32_t repeat_count = 100;
   v8::Local<v8::Value> args[] = {v8::Integer::New(isolate, repeat_count)};
   RunSampler(env.local(), function, args, arraysize(args), 100, 100);

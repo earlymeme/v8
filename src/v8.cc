@@ -52,7 +52,7 @@ void V8::TearDown() {
   FlagList::ResetAllFlags();  // Frees memory held by string arguments.
 }
 
-
+// 每个进程初始化一次的具体实现
 void V8::InitializeOncePerProcessImpl() {
   FlagList::EnforceFlagImplications();
 
