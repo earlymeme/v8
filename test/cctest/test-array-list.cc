@@ -42,6 +42,7 @@ TEST(ArrayList) {
   array->Clear(2, isolate->heap()->undefined_value());
   array->SetLength(2);
   CHECK_EQ(2, array->Length());
+  CHECK_EQ(false, array->IsFull());
   CHECK_EQ(100, Smi::cast(array->Get(0))->value());
   CHECK_EQ(200, Smi::cast(array->Get(1))->value());
 }

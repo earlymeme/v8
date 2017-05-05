@@ -1,7 +1,7 @@
 ### Build命令
 
 ```
-tools/dev/v8gen.py x64.debug -- v8_enable_object_print=true v8_enable_gdbjit=true v8_enable_trace_maps=true v8_enable_verify_heap=true
+tools/dev/v8gen.py x64.debug -- v8_enable_disassembler=true v8_enable_object_print=true v8_enable_gdbjit=true v8_enable_trace_maps=true v8_enable_verify_heap=true
 
 ninja -C out.gn/x64.debug
 
@@ -20,12 +20,13 @@ out.gn/x64.debug/d8 --print-opt-code --print-code-verbose --allow-natives-syntax
 
 // debug 单个c++测试用例
 gdb --args out.gn/x64.debug/cctest test-func-name-inference/GlobalProperty
-gdb --args out.gn/x64.debug/cctest test-interpreter/InterpreterReturn
+lldb -- out.gn/x64.debug/cctest test-interpreter/InterpreterReturn
 
 // debug 单个测试用例
 // 如果想要测试源码里某段代码关联的测试用例,可以使用 UNREACHABLE() 宏
 tools/run-tests.py --gn -m debug debugger/debug/debug-stepout-scope-part3
 tools/run-tests.py --gn -m debug mjsunit/array-sort
+out.gn/x64.debug/unittests --random-seed=-1055853278 --gtest_filter=ValueSerializerTestWithWasm.RountripWasmInline --gtest_random_seed=-1055853278 --gtest_print_time=0 --nohard-abort --nodead-code-elimination --nofold-constants --enable-slow-asserts --verify-heap
 
 gdb --args out.gn/x64.debug/v8_hello_world
 
