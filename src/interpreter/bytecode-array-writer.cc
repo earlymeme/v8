@@ -52,9 +52,9 @@ Handle<BytecodeArray> BytecodeArrayWriter::ToBytecodeArray(
       source_position_table_builder()->ToSourcePositionTable(
           isolate, Handle<AbstractCode>::cast(bytecode_array));
   bytecode_array->set_source_position_table(*source_position_table);
-  printf("BytecodeArrayWriter::ToBytecodeArray:\n");
-  bytecode_array->Print();
-  printf("BytecodeArrayWriter::ToBytecodeArray...\n");
+//  printf("BytecodeArrayWriter::ToBytecodeArray:\n");
+//  bytecode_array->Print();
+//  printf("BytecodeArrayWriter::ToBytecodeArray...\n");
   return bytecode_array;
 }
 
