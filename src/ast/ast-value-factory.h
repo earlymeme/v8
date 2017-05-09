@@ -179,6 +179,7 @@ enum class AstSymbol : uint8_t { kHomeObjectSymbol };
 
 // AstValue is either a string, a symbol, a number, a string array, a boolean,
 // or a special value (null, undefined, the hole).
+// AstValue类，可以是string,symbol,number,string array,boolean,和某个特殊值（null, undefined, the hole）
 class AstValue : public ZoneObject {
  public:
   bool IsString() const {
@@ -310,6 +311,7 @@ class AstValue : public ZoneObject {
 
   // {value_} is stored as Object** instead of a Handle<Object> so it can be
   // stored in a union with {next_}.
+  // value_是以Object**存的，而不是Handle<Object>，它可以和next_一起存在一个union里
   union {
     Object** value_;  // if internalized
     AstValue* next_;  // if !internalized
@@ -541,6 +543,7 @@ class AstValueFactory {
 
   // Caches for faster access: small numbers, one character lowercase strings
   // (for minified code).
+  // 缓存，用来快速访问小的数和单个小写的字符
   AstValue* smis_[kMaxCachedSmi + 1];
   AstRawString* one_character_strings_[26];
 

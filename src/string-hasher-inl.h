@@ -109,7 +109,7 @@ inline void StringHasher::AddCharacters(const Char* chars, int length) {
     AddCharacter(chars[i]);
   }
 }
-
+// 构造序列字符串，类似'abc'这种
 template <typename schar>
 uint32_t StringHasher::HashSequentialString(const schar* chars, int length,
                                             uint32_t seed) {

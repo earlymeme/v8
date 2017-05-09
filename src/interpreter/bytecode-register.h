@@ -16,6 +16,7 @@ namespace interpreter {
 
 // An interpreter Register which is located in the function's Register file
 // in its stack-frame. Register hold parameters, this, and expression values.
+// 解释器寄存器，它位于函数栈中的寄存器文件中，拥有形参，this，表达式值
 class V8_EXPORT_PRIVATE Register final {
  public:
   explicit Register(int index = kInvalidIndex) : index_(index) {}

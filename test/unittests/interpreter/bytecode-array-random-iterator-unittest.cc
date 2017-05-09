@@ -65,6 +65,7 @@ TEST_F(BytecodeArrayRandomIteratorTest, InvalidBeforeStart) {
 
   ast_factory.Internalize(isolate());
   Handle<BytecodeArray> bytecodeArray = builder.ToBytecodeArray(isolate());
+  bytecodeArray->Print();
   BytecodeArrayRandomIterator iterator(bytecodeArray, zone());
 
   iterator.GoToStart();
@@ -742,6 +743,9 @@ TEST_F(BytecodeArrayRandomIteratorTest, IteratesBytecodeArrayBackwards) {
   RegisterList triple(0, 3);
   Register param = Register::FromParameterIndex(2, builder.parameter_count());
   const AstRawString* name = ast_factory.GetOneByteString("abc");
+  ast_factory.GetOneByteString("d");
+  unsigned kInvalidOffset = static_cast<unsigned>(-1);// 2^n - 1 (我的x86-64机器n=32，就是int存储的字节数)
+  printf("%d", kInvalidOffset);
   uint32_t name_index = 2;
   uint32_t feedback_slot = 97;
 

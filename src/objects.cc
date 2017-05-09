@@ -11914,7 +11914,7 @@ uint32_t StringHasher::GetHashField() {
       return MakeArrayIndexHash(array_index_, length_);
     }
     return (GetHashCore(raw_running_hash_) << String::kHashShift) |
-           String::kIsNotArrayIndexMask;
+           String::kIsNotArrayIndexMask; // String::kHashShift = 2; String::kIsNotArrayIndexMask=2
   } else {
     return (length_ << String::kHashShift) | String::kIsNotArrayIndexMask;
   }
