@@ -13,6 +13,18 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "hello world",
+            "program": "${workspaceRoot}/out.gn/x64.debug/v8_hello_world",
+            "args": [],
+            "cwd": "${workspaceRoot}",
+            "sourceMap": { 
+                "/build/glibc-cxyGtm/glibc-2.24/csu/libc-start.c" : "/home/zhujianchen/libc-start.c",
+                "/build/glibc-cxyGtm/glibc-2.24/" : "/home/zhujianchen/glibc-2.24/"
+            }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "lldb for demo",
             "program": "${workspaceRoot}/out.gn/x64.debug/d8",
             "args": [

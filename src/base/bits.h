@@ -27,6 +27,7 @@ class CheckedNumeric;
 namespace bits {
 
 // CountPopulation32(value) returns the number of bits set in |value|.
+// 返回value绝对值1的个数
 inline unsigned CountPopulation32(uint32_t value) {
 #if V8_HAS_BUILTIN_POPCOUNT
   return __builtin_popcount(value);
