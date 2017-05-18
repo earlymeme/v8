@@ -77,7 +77,7 @@ inline unsigned CountLeadingZeros32(uint32_t value) {
   value = value | (value >> 2);
   value = value | (value >> 4);
   value = value | (value >> 8);
-  value = value | (value >> 16);
+  value = value | (value >> 16); // 把所有位设置成1
   return CountPopulation32(~value);
 #endif
 }
@@ -94,7 +94,7 @@ inline unsigned CountLeadingZeros64(uint64_t value) {
   value = value | (value >> 4);
   value = value | (value >> 8);
   value = value | (value >> 16);
-  value = value | (value >> 32);
+  value = value | (value >> 32); // 先把说有位设置成1，https://www.hackerearth.com/practice/notes/bit-manipulation/
   return CountPopulation64(~value);
 #endif
 }

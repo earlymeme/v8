@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <iostream>
+
 #include "src/v8.h"
 
 #include "src/interpreter/bytecode-node.h"
@@ -79,6 +81,8 @@ TEST_F(BytecodeNodeTest, EqualityWithSourceInfo) {
   BytecodeSourceInfo first_source_info(3, true);
   BytecodeNode node(Bytecode::kForInNext, operands[0], operands[1], operands[2],
                     operands[3], first_source_info);
+  // debug
+  std::cout << node;
   CHECK_EQ(node, node);
   BytecodeSourceInfo second_source_info(3, true);
   BytecodeNode other(Bytecode::kForInNext, operands[0], operands[1],

@@ -841,6 +841,7 @@ class V8_EXPORT_PRIVATE Bytecodes final {
   static bool BytecodeHasHandler(Bytecode bytecode, OperandScale operand_scale);
 
   // Return the operand scale required to hold a signed operand with |value|.
+  // 根据value的值的大小计算操作数规模
   static OperandScale ScaleForSignedOperand(int32_t value) {
     if (value >= kMinInt8 && value <= kMaxInt8) {
       return OperandScale::kSingle;

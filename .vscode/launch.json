@@ -1,0 +1,78 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "type": "lldb-mi",
+            "request": "launch",
+            "name": "Launch Program",
+            "target": "out.gn/x64.debug/d8",
+            "cwd": "${workspaceRoot}",
+            "arguments": "--trace-opt demo/split.js"        
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "lldb for demo",
+            "program": "${workspaceRoot}/out.gn/x64.debug/d8",
+            "args": [
+                "--trace-opt",
+                "--trace-deopt",
+                "--print-bytecode",
+                "--ignition",
+                "--allow-natives-syntax",
+                "--test",
+                "--enable-tracing",
+                "--logfile-per-isolate",
+                "demo/test16.js"
+            ],
+            "cwd": "${workspaceRoot}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "lldb for d8",
+            "program": "${workspaceRoot}/out.gn/x64.debug/d8",
+            "args": [
+                "--trace-opt",
+                "--trace-deopt",
+                "--print-bytecode",
+                "--ignition",
+                "--allow-natives-syntax",
+                "--test",
+                "--enable-tracing",
+                "--logfile-per-isolate",
+                "demo/split.js"
+            ],
+            "cwd": "${workspaceRoot}"
+        },
+        {
+            "name": "d8 debug demo",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceRoot}/out.gn/x64.debug/d8",
+            "args": [
+                "--trace-opt",
+                "--trace-deopt",
+                "--print-bytecode",
+                "--ignition",
+                "--allow-natives-syntax",
+                "demo/split.js"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceRoot}",
+            "environment": [],
+            "externalConsole": true,
+            "linux": {
+                "MIMode": "gdb",
+                "setupCommands": [
+                    {
+                        "description": "Enable pretty-printing for gdb",
+                        "text": "-enable-pretty-printing",
+                        "ignoreFailures": true
+                    }
+                ]
+            }
+        }
+    ]
+}

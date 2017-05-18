@@ -2237,7 +2237,7 @@ void SourceGroup::Execute(Isolate* isolate) {
       Shell::Exit(1);
     }
     Shell::options.script_executed = true;
-    if (!Shell::ExecuteString(isolate, source, file_name, false, true)) {
+    if (!Shell::ExecuteString(isolate, source, file_name, true, true)) {
       exception_was_thrown = true;
       break;
     }
@@ -2922,6 +2922,8 @@ void Shell::CleanupWorkers() {
   // Make a copy of workers_, because we don't want to call Worker::Terminate
   // while holding the workers_mutex_ lock. Otherwise, if a worker is about to
   // create a new Worker, it would deadlock.
+  // 创建一个拷贝，拥有workers_mutex_锁时，不调用Worker::Terminate方法。
+  // 另外，如果一个worker要创建一个新的worker的话，会停滞。
   i::List<Worker*> workers_copy;
   {
     base::LockGuard<base::Mutex> lock_guard(workers_mutex_.Pointer());
