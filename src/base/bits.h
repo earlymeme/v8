@@ -160,6 +160,7 @@ inline unsigned CountTrailingZeros(uint64_t value) {
 }
 
 // Returns true iff |value| is a power of 2.
+// https://www.hackerearth.com/practice/notes/bit-manipulation/
 inline bool IsPowerOfTwo32(uint32_t value) {
   // value检查是否是0，!(value & (value - 1))检查value是否是2的幂
   return value && !(value & (value - 1));
