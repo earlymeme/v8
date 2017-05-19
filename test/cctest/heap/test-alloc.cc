@@ -235,8 +235,8 @@ TEST(CodeRange) {
           &allocated);
       CHECK(base != NULL);
       blocks.Add(::Block(base, static_cast<int>(allocated)));
-      current_allocated += static_cast<int>(allocated);
-      total_allocated += static_cast<int>(allocated);
+      current_allocated += static_cast<int>(allocated); // 1M
+      total_allocated += static_cast<int>(allocated); // 1M
     } else {
       // Free a block.
       int index = Pseudorandom() % blocks.length();

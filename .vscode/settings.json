@@ -12,6 +12,7 @@
         "tuple": "cpp",
         "utility": "cpp",
         "iostream": "cpp",
-        "iterator": "cpp"
+        "iterator": "cpp",
+        "__locale": "cpp"
     }
 }
