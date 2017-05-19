@@ -4,9 +4,9 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Launch",
+            "name": "cctest",
             "program": "${workspaceRoot}/out.gn/x64.debug/cctest",
-            "args": ["test-alloc/CodeRange"],
+            "args": ["test-array-buffer-tracker/ArrayBuffer_ScavengeAndMC"],
             "cwd": "${workspaceRoot}",
             "sourceMap": { 
                 "/build/glibc-cxyGtm/glibc-2.24/csu/libc-start.c" : "/home/zhujianchen/libc-start.c",
@@ -16,7 +16,7 @@
         {
             "type": "lldb-mi",
             "request": "launch",
-            "name": "Launch Program",
+            "name": "demo",
             "target": "out.gn/x64.debug/d8",
             "cwd": "${workspaceRoot}",
             "arguments": "--trace-opt demo/split.js"        

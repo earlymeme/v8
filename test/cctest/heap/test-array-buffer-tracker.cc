@@ -92,6 +92,7 @@ TEST(ArrayBuffer_ScavengeAndMC) {
   {
     v8::HandleScope handle_scope(isolate);
     Local<v8::ArrayBuffer> ab = v8::ArrayBuffer::New(isolate, 100);
+    ab->GetContents();
     Handle<JSArrayBuffer> buf = v8::Utils::OpenHandle(*ab);
     CHECK(IsTracked(*buf));
     heap::GcAndSweep(heap, NEW_SPACE);
