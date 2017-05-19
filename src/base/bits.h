@@ -150,6 +150,7 @@ inline unsigned CountTrailingZeros64(uint64_t value) {
 }
 
 // Overloaded versions of CountTrailingZeros32/64.
+// 计算value里面尾部0的个数，比如1010得到1
 inline unsigned CountTrailingZeros(uint32_t value) {
   return CountTrailingZeros32(value);
 }
@@ -160,11 +161,13 @@ inline unsigned CountTrailingZeros(uint64_t value) {
 
 // Returns true iff |value| is a power of 2.
 inline bool IsPowerOfTwo32(uint32_t value) {
+  // value检查是否是0，!(value & (value - 1))检查value是否是2的幂
   return value && !(value & (value - 1));
 }
 
 
 // Returns true iff |value| is a power of 2.
+// 是否是2的幂，处理的是类型是uint64_t
 inline bool IsPowerOfTwo64(uint64_t value) {
   return value && !(value & (value - 1));
 }
@@ -218,6 +221,7 @@ inline uint64_t RotateLeft64(uint64_t value, uint64_t shift) {
 // SignedAddOverflow32(lhs,rhs,val) performs a signed summation of |lhs| and
 // |rhs| and stores the result into the variable pointed to by |val| and
 // returns true if the signed summation resulted in an overflow.
+// 处理加法溢出，返回val指针指向结果，如果溢出了返回true
 inline bool SignedAddOverflow32(int32_t lhs, int32_t rhs, int32_t* val) {
 #if V8_HAS_BUILTIN_SADD_OVERFLOW
   return __builtin_sadd_overflow(lhs, rhs, val);
