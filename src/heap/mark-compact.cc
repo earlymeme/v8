@@ -668,7 +668,7 @@ void MarkCompactCollector::Sweeper::EnsureNewSpaceCompleted() {
     }
   }
 }
-
+//清理完成了
 void MarkCompactCollector::EnsureSweepingCompleted() {
   if (!sweeper().sweeping_in_progress()) return;
 
@@ -684,6 +684,7 @@ void MarkCompactCollector::EnsureSweepingCompleted() {
   }
 #endif
 
+  // 有延迟的chunks
   if (heap()->memory_allocator()->unmapper()->has_delayed_chunks())
     heap()->memory_allocator()->unmapper()->FreeQueuedChunks();
 }

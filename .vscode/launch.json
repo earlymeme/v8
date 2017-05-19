@@ -1,6 +1,7 @@
 {
     "version": "0.2.0",
     "configurations": [
+
         {
             "type": "lldb",
             "request": "launch",
@@ -85,7 +86,41 @@
             "stopAtEntry": false,
             "cwd": "${workspaceRoot}",
             "environment": [],
-            "externalConsole": true,
+            "linux": {
+                "MIMode": "gdb",
+                "setupCommands": [
+                    {
+                        "description": "Enable pretty-printing for gdb",
+                        "text": "-enable-pretty-printing",
+                        "ignoreFailures": true
+                    }
+                ]
+            }
+        },
+        {
+            "type": "cppdbg",
+            "request": "launch",
+            "name": "cctest gdb",
+            "program": "${workspaceRoot}/out.gn/x64.debug/cctest",
+            "args": ["test-array-buffer-tracker/ArrayBuffer_ScavengeAndMC"],
+            "cwd": "${workspaceRoot}",
+            "linux": {
+                "MIMode": "gdb",
+                "setupCommands": [
+                    {
+                        "description": "Enable pretty-printing for gdb",
+                        "text": "-enable-pretty-printing",
+                        "ignoreFailures": true
+                    }
+                ]
+            }
+        },
+        {
+            "type": "cppdbg",
+            "request": "attach",
+            "name": "C++ Attach",
+            "program": "${workspaceRoot}/out.gn/x64.debug/cctest",
+            "processId": "${command:pickProcess}",
             "linux": {
                 "MIMode": "gdb",
                 "setupCommands": [
