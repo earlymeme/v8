@@ -13,6 +13,7 @@ namespace internal {
 
 // Collects dependencies for this compilation, e.g. assumptions about
 // stable maps, constant globals, etc.
+// 编译期收集依赖
 class CompilationDependencies {
  public:
   CompilationDependencies(Isolate* isolate, Zone* zone)

@@ -14761,7 +14761,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
 }
 #endif  // ENABLE_DISASSEMBLER
 
-
+// 输出bytecode
 void BytecodeArray::Disassemble(std::ostream& os) {
   os << "Parameter count " << parameter_count() << "\n";
   os << "Frame size " << frame_size() << "\n";
