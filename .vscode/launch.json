@@ -12,7 +12,8 @@
             "sourceMap": { 
                 "/build/glibc-cxyGtm/glibc-2.24/csu/libc-start.c" : "/home/zhujianchen/libc-start.c",
                 "/build/glibc-cxyGtm/glibc-2.24/" : "/home/zhujianchen/glibc-2.24/"
-            }
+            },
+            "initCommands": ["command source /home/zhujianchen/.lldbinit", "command source ${workspaceRoot}/.lldbinit"]
         },
         {
             "type": "lldb-mi",
@@ -32,7 +33,8 @@
             "sourceMap": { 
                 "/build/glibc-cxyGtm/glibc-2.24/csu/libc-start.c" : "/home/zhujianchen/libc-start.c",
                 "/build/glibc-cxyGtm/glibc-2.24/" : "/home/zhujianchen/glibc-2.24/"
-            }
+            },
+            "initCommands": ["command source /home/zhujianchen/.lldbinit", "command source ${workspaceRoot}/.lldbinit"]
         },
         {
             "type": "lldb",
