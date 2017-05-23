@@ -21,15 +21,6 @@ void MarkCompactCollector::PushBlack(HeapObject* obj) {
   }
 }
 
-void MinorMarkCompactCollector::PushBlack(HeapObject* obj) {
-  DCHECK((ObjectMarking::IsBlack<MarkBit::NON_ATOMIC>(
-      obj, MarkingState::External(obj))));
-  if (!marking_deque()->Push(obj)) {
-    ObjectMarking::BlackToGrey<MarkBit::NON_ATOMIC>(
-        obj, MarkingState::External(obj));
-  }
-}
-
 void MarkCompactCollector::UnshiftBlack(HeapObject* obj) {
   DCHECK(ObjectMarking::IsBlack(obj, MarkingState::Internal(obj)));
   if (!marking_deque()->Unshift(obj)) {
@@ -38,19 +29,8 @@ void MarkCompactCollector::UnshiftBlack(HeapObject* obj) {
 }
 
 void MarkCompactCollector::MarkObject(HeapObject* obj) {
-  if (ObjectMarking::IsWhite<MarkBit::NON_ATOMIC>(
+  if (ObjectMarking::WhiteToBlack<MarkBit::NON_ATOMIC>(
           obj, MarkingState::Internal(obj))) {
-    ObjectMarking::WhiteToBlack<MarkBit::NON_ATOMIC>(
-        obj, MarkingState::Internal(obj));
-    PushBlack(obj);
-  }
-}
-
-void MinorMarkCompactCollector::MarkObject(HeapObject* obj) {
-  if (ObjectMarking::IsWhite<MarkBit::NON_ATOMIC>(
-          obj, MarkingState::External(obj))) {
-    ObjectMarking::WhiteToBlack<MarkBit::NON_ATOMIC>(
-        obj, MarkingState::External(obj));
     PushBlack(obj);
   }
 }
@@ -65,88 +45,6 @@ void MarkCompactCollector::RecordSlot(HeapObject* object, Object** slot,
         ObjectMarking::IsBlackOrGrey(object, MarkingState::Internal(object)));
     RememberedSet<OLD_TO_OLD>::Insert(source_page,
                                       reinterpret_cast<Address>(slot));
-  }
-}
-
-
-void CodeFlusher::AddCandidate(SharedFunctionInfo* shared_info) {
-  if (GetNextCandidate(shared_info) == nullptr) {
-    SetNextCandidate(shared_info, shared_function_info_candidates_head_);
-    shared_function_info_candidates_head_ = shared_info;
-  }
-}
-
-
-void CodeFlusher::AddCandidate(JSFunction* function) {
-  DCHECK(function->code() == function->shared()->code());
-  if (function->next_function_link()->IsUndefined(isolate_)) {
-    SetNextCandidate(function, jsfunction_candidates_head_);
-    jsfunction_candidates_head_ = function;
-  }
-}
-
-
-JSFunction** CodeFlusher::GetNextCandidateSlot(JSFunction* candidate) {
-  return reinterpret_cast<JSFunction**>(
-      HeapObject::RawField(candidate, JSFunction::kNextFunctionLinkOffset));
-}
-
-
-JSFunction* CodeFlusher::GetNextCandidate(JSFunction* candidate) {
-  Object* next_candidate = candidate->next_function_link();
-  return reinterpret_cast<JSFunction*>(next_candidate);
-}
-
-
-void CodeFlusher::SetNextCandidate(JSFunction* candidate,
-                                   JSFunction* next_candidate) {
-  candidate->set_next_function_link(next_candidate, UPDATE_WEAK_WRITE_BARRIER);
-}
-
-
-void CodeFlusher::ClearNextCandidate(JSFunction* candidate, Object* undefined) {
-  DCHECK(undefined->IsUndefined(candidate->GetIsolate()));
-  candidate->set_next_function_link(undefined, SKIP_WRITE_BARRIER);
-}
-
-
-SharedFunctionInfo* CodeFlusher::GetNextCandidate(
-    SharedFunctionInfo* candidate) {
-  Object* next_candidate = candidate->code()->gc_metadata();
-  return reinterpret_cast<SharedFunctionInfo*>(next_candidate);
-}
-
-
-void CodeFlusher::SetNextCandidate(SharedFunctionInfo* candidate,
-                                   SharedFunctionInfo* next_candidate) {
-  candidate->code()->set_gc_metadata(next_candidate);
-}
-
-
-void CodeFlusher::ClearNextCandidate(SharedFunctionInfo* candidate) {
-  candidate->code()->set_gc_metadata(NULL, SKIP_WRITE_BARRIER);
-}
-
-void CodeFlusher::VisitListHeads(RootVisitor* visitor) {
-  visitor->VisitRootPointer(
-      Root::kCodeFlusher,
-      reinterpret_cast<Object**>(&jsfunction_candidates_head_));
-  visitor->VisitRootPointer(
-      Root::kCodeFlusher,
-      reinterpret_cast<Object**>(&shared_function_info_candidates_head_));
-}
-
-template <typename StaticVisitor>
-void CodeFlusher::IteratePointersToFromSpace() {
-  Heap* heap = isolate_->heap();
-  JSFunction* candidate = jsfunction_candidates_head_;
-  while (candidate != nullptr) {
-    JSFunction** slot = GetNextCandidateSlot(candidate);
-    if (heap->InFromSpace(*slot)) {
-      StaticVisitor::VisitPointer(heap, candidate,
-                                  reinterpret_cast<Object**>(slot));
-    }
-    candidate = GetNextCandidate(candidate);
   }
 }
 

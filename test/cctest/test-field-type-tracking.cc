@@ -261,7 +261,6 @@ class Expectations {
       } else {
         // kAccessor
         UNREACHABLE();
-        return false;
       }
     } else {
       // kDescriptor
@@ -277,7 +276,6 @@ class Expectations {
       }
     }
     UNREACHABLE();
-    return false;
   }
 
   bool Check(Map* map, int expected_nof) const {
@@ -1768,9 +1766,9 @@ static void TestReconfigureElementsKind_GeneralizeField(
   // Ensure Map::FindElementsKindTransitionedMap() is able to find the
   // transitioned map.
   {
-    MapHandleList map_list;
-    map_list.Add(updated_map);
-    Map* transitioned_map = map2->FindElementsKindTransitionedMap(&map_list);
+    MapHandles map_list;
+    map_list.push_back(updated_map);
+    Map* transitioned_map = map2->FindElementsKindTransitionedMap(map_list);
     CHECK_EQ(*updated_map, transitioned_map);
   }
 }
@@ -1863,9 +1861,9 @@ static void TestReconfigureElementsKind_GeneralizeFieldTrivial(
   // Ensure Map::FindElementsKindTransitionedMap() is able to find the
   // transitioned map.
   {
-    MapHandleList map_list;
-    map_list.Add(updated_map);
-    Map* transitioned_map = map2->FindElementsKindTransitionedMap(&map_list);
+    MapHandles map_list;
+    map_list.push_back(updated_map);
+    Map* transitioned_map = map2->FindElementsKindTransitionedMap(map_list);
     CHECK_EQ(*updated_map, transitioned_map);
   }
 }

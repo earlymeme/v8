@@ -306,9 +306,16 @@ Node* RegExpBuiltinsAssembler::RegExpExecInternal(Node* const context,
 
   Node* const smi_string_length = LoadStringLength(string);
 
-  // Bail out to runtime for invalid {last_index} values.
-  GotoIfNot(TaggedIsSmi(last_index), &runtime);
-  GotoIf(SmiAboveOrEqual(last_index, smi_string_length), &runtime);
+  // At this point, last_index is definitely a canonicalized non-negative
+  // number, which implies that any non-Smi last_index is greater than
+  // the maximal string length. If lastIndex > string.length then the matcher
+  // must fail.
+
+  Label if_failure(this);
+  CSA_ASSERT(this, IsNumberNormalized(last_index));
+  CSA_ASSERT(this, IsNumberPositive(last_index));
+  GotoIfNot(TaggedIsSmi(last_index), &if_failure);  // Outside Smi range.
+  GotoIf(SmiGreaterThan(last_index, smi_string_length), &if_failure);
 
   // Load the irregexp code object and offsets into the subject string. Both
   // depend on whether the string is one- or two-byte.
@@ -358,8 +365,7 @@ Node* RegExpBuiltinsAssembler::RegExpExecInternal(Node* const context,
   GotoIf(TaggedIsSmi(code), &runtime);
   CSA_ASSERT(this, HasInstanceType(code, CODE_TYPE));
 
-  Label if_success(this), if_failure(this),
-      if_exception(this, Label::kDeferred);
+  Label if_success(this), if_exception(this, Label::kDeferred);
   {
     IncrementCounter(isolate()->counters()->regexp_entry_native(), 1);
 
@@ -571,8 +577,7 @@ Node* RegExpBuiltinsAssembler::RegExpPrototypeExecBodyWithoutResult(
 
       BIND(&call_tolength);
       {
-        var_lastindex.Bind(
-            CallBuiltin(Builtins::kToLength, context, regexp_lastindex));
+        var_lastindex.Bind(ToLength_Inline(context, regexp_lastindex));
         Goto(&next);
       }
 
@@ -1935,7 +1940,7 @@ void RegExpBuiltinsAssembler::RegExpPrototypeMatchBody(Node* const context,
         if (is_fastpath) {
           CSA_ASSERT(this, TaggedIsPositiveSmi(last_index));
         } else {
-          last_index = CallBuiltin(Builtins::kToLength, context, last_index);
+          last_index = ToLength_Inline(context, last_index);
         }
 
         Node* const new_last_index =
@@ -2431,10 +2436,19 @@ TF_BUILTIN(RegExpSplit, RegExpBuiltinsAssembler) {
 // ES#sec-regexp.prototype-@@split
 // RegExp.prototype [ @@split ] ( string, limit )
 TF_BUILTIN(RegExpPrototypeSplit, RegExpBuiltinsAssembler) {
-  Node* const maybe_receiver = Parameter(Descriptor::kReceiver);
-  Node* const maybe_string = Parameter(Descriptor::kString);
-  Node* const maybe_limit = Parameter(Descriptor::kLimit);
-  Node* const context = Parameter(Descriptor::kContext);
+  const int kStringArg = 0;
+  const int kLimitArg = 1;
+
+  Node* argc =
+      ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
+  CodeStubArguments args(this, argc);
+
+  Node* const maybe_receiver = args.GetReceiver();
+  Node* const maybe_string =
+      args.GetOptionalArgumentValue(kStringArg, UndefinedConstant());
+  Node* const maybe_limit =
+      args.GetOptionalArgumentValue(kLimitArg, UndefinedConstant());
+  Node* const context = Parameter(BuiltinDescriptor::kContext);
 
   // Ensure {maybe_receiver} is a JSReceiver.
   ThrowIfNotJSReceiver(context, maybe_receiver,
@@ -2449,12 +2463,12 @@ TF_BUILTIN(RegExpPrototypeSplit, RegExpBuiltinsAssembler) {
   BranchIfFastRegExp(context, receiver, &stub, &runtime);
 
   BIND(&stub);
-  Return(CallBuiltin(Builtins::kRegExpSplit, context, receiver, string,
-                     maybe_limit));
+  args.PopAndReturn(CallBuiltin(Builtins::kRegExpSplit, context, receiver,
+                                string, maybe_limit));
 
   BIND(&runtime);
-  Return(CallRuntime(Runtime::kRegExpSplit, context, receiver, string,
-                     maybe_limit));
+  args.PopAndReturn(CallRuntime(Runtime::kRegExpSplit, context, receiver,
+                                string, maybe_limit));
 }
 
 Node* RegExpBuiltinsAssembler::ReplaceGlobalCallableFastPath(
@@ -2794,8 +2808,7 @@ TF_BUILTIN(RegExpReplace, RegExpBuiltinsAssembler) {
   // 3. Does ToString({replace_value}) contain '$'?
   BIND(&checkreplacestring);
   {
-    Node* const replace_string =
-        CallBuiltin(Builtins::kToString, context, replace_value);
+    Node* const replace_string = ToString_Inline(context, replace_value);
 
     // ToString(replaceValue) could potentially change the shape of the RegExp
     // object. Recheck that we are still on the fast path and bail to runtime
@@ -2844,10 +2857,19 @@ TF_BUILTIN(RegExpReplace, RegExpBuiltinsAssembler) {
 // ES#sec-regexp.prototype-@@replace
 // RegExp.prototype [ @@replace ] ( string, replaceValue )
 TF_BUILTIN(RegExpPrototypeReplace, RegExpBuiltinsAssembler) {
-  Node* const maybe_receiver = Parameter(Descriptor::kReceiver);
-  Node* const maybe_string = Parameter(Descriptor::kString);
-  Node* const replace_value = Parameter(Descriptor::kReplaceValue);
-  Node* const context = Parameter(Descriptor::kContext);
+  const int kStringArg = 0;
+  const int kReplaceValueArg = 1;
+
+  Node* argc =
+      ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
+  CodeStubArguments args(this, argc);
+
+  Node* const maybe_receiver = args.GetReceiver();
+  Node* const maybe_string =
+      args.GetOptionalArgumentValue(kStringArg, UndefinedConstant());
+  Node* const replace_value =
+      args.GetOptionalArgumentValue(kReplaceValueArg, UndefinedConstant());
+  Node* const context = Parameter(BuiltinDescriptor::kContext);
 
   // RegExpPrototypeReplace is a bit of a beast - a summary of dispatch logic:
   //
@@ -2874,19 +2896,19 @@ TF_BUILTIN(RegExpPrototypeReplace, RegExpBuiltinsAssembler) {
   Node* const receiver = maybe_receiver;
 
   // Convert {maybe_string} to a String.
-  Node* const string = CallBuiltin(Builtins::kToString, context, maybe_string);
+  Node* const string = ToString_Inline(context, maybe_string);
 
   // Fast-path checks: 1. Is the {receiver} an unmodified JSRegExp instance?
   Label stub(this), runtime(this, Label::kDeferred);
   BranchIfFastRegExp(context, receiver, &stub, &runtime);
 
   BIND(&stub);
-  Return(CallBuiltin(Builtins::kRegExpReplace, context, receiver, string,
-                     replace_value));
+  args.PopAndReturn(CallBuiltin(Builtins::kRegExpReplace, context, receiver,
+                                string, replace_value));
 
   BIND(&runtime);
-  Return(CallRuntime(Runtime::kRegExpReplace, context, receiver, string,
-                     replace_value));
+  args.PopAndReturn(CallRuntime(Runtime::kRegExpReplace, context, receiver,
+                                string, replace_value));
 }
 
 // Simple string matching functionality for internal use which does not modify

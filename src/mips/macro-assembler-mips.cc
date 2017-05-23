@@ -219,7 +219,7 @@ void MacroAssembler::RecordWriteField(
   Addu(dst, object, Operand(offset - kHeapObjectTag));
   if (emit_debug_code()) {
     Label ok;
-    And(t8, dst, Operand((1 << kPointerSizeLog2) - 1));
+    And(t8, dst, Operand(kPointerSize - 1));
     Branch(&ok, eq, t8, Operand(zero_reg));
     stop("Unaligned cell in write barrier");
     bind(&ok);
@@ -287,7 +287,7 @@ void MacroAssembler::RecordWriteForMap(Register object,
   Addu(dst, object, Operand(HeapObject::kMapOffset - kHeapObjectTag));
   if (emit_debug_code()) {
     Label ok;
-    And(at, dst, Operand((1 << kPointerSizeLog2) - 1));
+    And(at, dst, Operand(kPointerSize - 1));
     Branch(&ok, eq, at, Operand(zero_reg));
     stop("Unaligned cell in write barrier");
     bind(&ok);
@@ -6544,7 +6544,6 @@ Register GetRegisterThatIsNotOneOf(Register reg1,
     return candidate;
   }
   UNREACHABLE();
-  return no_reg;
 }
 
 bool AreAliased(Register reg1, Register reg2, Register reg3, Register reg4,

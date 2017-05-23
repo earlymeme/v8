@@ -265,7 +265,6 @@ class UnseededNumberDictionaryShape : public NumberDictionaryShape {
   template <typename Dictionary>
   static inline PropertyDetails DetailsAt(Dictionary* dict, int entry) {
     UNREACHABLE();
-    return PropertyDetails::Empty();
   }
 
   template <typename Dictionary>
@@ -334,6 +333,10 @@ class SeededNumberDictionary
   static const int kRequiresSlowElementsMask = 1;
   static const int kRequiresSlowElementsTagSize = 1;
   static const uint32_t kRequiresSlowElementsLimit = (1 << 29) - 1;
+
+  // JSObjects prefer dictionary elements if the dictionary saves this much
+  // memory compared to a fast elements backing store.
+  static const uint32_t kPreferFastElementsSizeFactor = 3;
 };
 
 class UnseededNumberDictionary

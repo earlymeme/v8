@@ -205,10 +205,10 @@ namespace compiler {
   V(Mips64I32x4SConvertF32x4)       \
   V(Mips64I32x4UConvertF32x4)       \
   V(Mips64I32x4Neg)                 \
-  V(Mips64I32x4LtS)                 \
-  V(Mips64I32x4LeS)                 \
-  V(Mips64I32x4LtU)                 \
-  V(Mips64I32x4LeU)                 \
+  V(Mips64I32x4GtS)                 \
+  V(Mips64I32x4GeS)                 \
+  V(Mips64I32x4GtU)                 \
+  V(Mips64I32x4GeU)                 \
   V(Mips64I16x8Splat)               \
   V(Mips64I16x8ExtractLane)         \
   V(Mips64I16x8ReplaceLane)         \
@@ -219,7 +219,28 @@ namespace compiler {
   V(Mips64I16x8Add)                 \
   V(Mips64I16x8AddSaturateS)        \
   V(Mips64I16x8Sub)                 \
-  V(Mips64I16x8SubSaturateS)
+  V(Mips64I16x8SubSaturateS)        \
+  V(Mips64I16x8Mul)                 \
+  V(Mips64I16x8MaxS)                \
+  V(Mips64I16x8MinS)                \
+  V(Mips64I16x8Eq)                  \
+  V(Mips64I16x8Ne)                  \
+  V(Mips64I16x8GtS)                 \
+  V(Mips64I16x8GeS)                 \
+  V(Mips64I16x8AddSaturateU)        \
+  V(Mips64I16x8SubSaturateU)        \
+  V(Mips64I16x8MaxU)                \
+  V(Mips64I16x8MinU)                \
+  V(Mips64I16x8GtU)                 \
+  V(Mips64I16x8GeU)                 \
+  V(Mips64I8x16Splat)               \
+  V(Mips64I8x16ExtractLane)         \
+  V(Mips64I8x16ReplaceLane)         \
+  V(Mips64I8x16Neg)                 \
+  V(Mips64I8x16Shl)                 \
+  V(Mips64I8x16ShrS)                \
+  V(Mips64S16x8Select)              \
+  V(Mips64S8x16Select)
 
 // Addressing modes represent the "shape" of inputs to an instruction.
 // Many instructions support multiple addressing modes. Addressing modes

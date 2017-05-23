@@ -274,6 +274,12 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(IsFunction)                      \
   V(IsDate)                          \
   V(IsJSProxy)                       \
+  V(IsJSMap)                         \
+  V(IsJSSet)                         \
+  V(IsJSMapIterator)                 \
+  V(IsJSSetIterator)                 \
+  V(IsJSWeakMap)                     \
+  V(IsJSWeakSet)                     \
   V(IsRegExp)                        \
   V(IsTypedArray)                    \
   V(ClassOf)                         \
@@ -313,6 +319,7 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(StringParseInt)                  \
   V(StringCharCodeAtRT)              \
   V(StringIndexOfUnchecked)          \
+  V(StringEqual)                     \
   V(SymbolDescriptiveString)         \
   V(GenerateRandomNumbers)           \
   V(ExternalStringGetChar)           \
@@ -578,6 +585,7 @@ bool BuiltinHasNoSideEffect(Builtins::Name id) {
     case Builtins::kStringPrototypeIncludes:
     case Builtins::kStringPrototypeIndexOf:
     case Builtins::kStringPrototypeLastIndexOf:
+    case Builtins::kStringPrototypeSlice:
     case Builtins::kStringPrototypeStartsWith:
     case Builtins::kStringPrototypeSubstr:
     case Builtins::kStringPrototypeSubstring:
@@ -672,6 +680,7 @@ bool DebugEvaluate::FunctionHasNoSideEffect(Handle<SharedFunctionInfo> info) {
     if (builtin_index >= 0 && builtin_index < Builtins::builtin_count &&
         BuiltinHasNoSideEffect(static_cast<Builtins::Name>(builtin_index))) {
 #ifdef DEBUG
+      // TODO(yangguo): Check builtin-to-builtin calls too.
       int mode = RelocInfo::ModeMask(RelocInfo::EXTERNAL_REFERENCE);
       bool failed = false;
       for (RelocIterator it(info->code(), mode); !it.done(); it.next()) {

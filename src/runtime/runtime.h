@@ -118,12 +118,19 @@ namespace internal {
   F(WeakCollectionHas, 3, 1)              \
   F(WeakCollectionDelete, 3, 1)           \
   F(WeakCollectionSet, 4, 1)              \
-  F(GetWeakSetValues, 2, 1)
+  F(GetWeakSetValues, 2, 1)               \
+  F(IsJSMap, 1, 1)                        \
+  F(IsJSSet, 1, 1)                        \
+  F(IsJSMapIterator, 1, 1)                \
+  F(IsJSSetIterator, 1, 1)                \
+  F(IsJSWeakMap, 1, 1)                    \
+  F(IsJSWeakSet, 1, 1)
 
 #define FOR_EACH_INTRINSIC_COMPILER(F)    \
   F(CompileLazy, 1, 1)                    \
   F(CompileOptimized_Concurrent, 1, 1)    \
   F(CompileOptimized_NotConcurrent, 1, 1) \
+  F(EvictOptimizedCodeSlot, 1, 1)         \
   F(NotifyStubFailure, 0, 1)              \
   F(NotifyDeoptimized, 1, 1)              \
   F(CompileForOnStackReplacement, 1, 1)   \
@@ -209,10 +216,18 @@ namespace internal {
   F(ForInFilter, 2, 1)              \
   F(ForInHasProperty, 2, 1)
 
-#define FOR_EACH_INTRINSIC_INTERPRETER(F) \
-  F(InterpreterNewClosure, 4, 1)          \
-  F(InterpreterTraceBytecodeEntry, 3, 1)  \
-  F(InterpreterTraceBytecodeExit, 3, 1)   \
+#ifdef V8_TRACE_IGNITION
+#define FOR_EACH_INTRINSIC_INTERPRETER_TRACE(F) \
+  F(InterpreterTraceBytecodeEntry, 3, 1)        \
+  F(InterpreterTraceBytecodeExit, 3, 1)
+#else
+#define FOR_EACH_INTRINSIC_INTERPRETER_TRACE(F)
+#endif
+
+#define FOR_EACH_INTRINSIC_INTERPRETER(F)      \
+  FOR_EACH_INTRINSIC_INTERPRETER_TRACE(F)      \
+  F(InterpreterNewClosure, 4, 1)               \
+  F(InterpreterStringConcat, -1 /* >= 2 */, 1) \
   F(InterpreterAdvanceBytecodeOffset, 2, 1)
 
 #define FOR_EACH_INTRINSIC_FUNCTION(F)     \
@@ -377,6 +392,7 @@ namespace internal {
 #define FOR_EACH_INTRINSIC_OBJECT(F)                            \
   F(AddDictionaryProperty, 3, 1)                                \
   F(GetPrototype, 1, 1)                                         \
+  F(ObjectKeys, 1, 1)                                           \
   F(ObjectHasOwnProperty, 2, 1)                                 \
   F(ObjectCreate, 2, 1)                                         \
   F(InternalSetPrototype, 2, 1)                                 \
@@ -465,9 +481,7 @@ namespace internal {
   F(PromiseRevokeReject, 1, 1)              \
   F(PromiseResult, 1, 1)                    \
   F(PromiseStatus, 1, 1)                    \
-  F(ReportPromiseReject, 2, 1)              \
-  F(IncrementWaitCount, 0, 1)               \
-  F(DecrementWaitCount, 0, 1)
+  F(ReportPromiseReject, 2, 1)
 
 #define FOR_EACH_INTRINSIC_PROXY(F)     \
   F(IsJSProxy, 1, 1)                    \
@@ -580,7 +594,6 @@ namespace internal {
   F(Abort, 1, 1)                              \
   F(AbortJS, 1, 1)                            \
   F(NativeScriptsCount, 0, 1)                 \
-  F(GetV8Version, 0, 1)                       \
   F(DisassembleFunction, 1, 1)                \
   F(TraceEnter, 0, 1)                         \
   F(TraceExit, 1, 1)                          \
@@ -637,7 +650,8 @@ namespace internal {
   F(IsTypedArray, 1, 1)                  \
   F(IsSharedTypedArray, 1, 1)            \
   F(IsSharedIntegerTypedArray, 1, 1)     \
-  F(IsSharedInteger32TypedArray, 1, 1)
+  F(IsSharedInteger32TypedArray, 1, 1)   \
+  F(TypedArraySpeciesCreateByLength, 2, 1)
 
 #define FOR_EACH_INTRINSIC_WASM(F)     \
   F(WasmGrowMemory, 1, 1)              \

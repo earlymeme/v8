@@ -73,9 +73,37 @@ const int kMaxSerializerMemoryUsage = 1 * MB;  // Arbitrary maximum for testing.
 // array buffers storing the lengths as a SMI internally.
 #define TWO_GB (2u * 1024u * 1024u * 1024u)
 
-class ShellArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
+// Forwards memory reservation and protection functions to the V8 default
+// allocator. Used by ShellArrayBufferAllocator and MockArrayBufferAllocator.
+class ArrayBufferAllocatorBase : public v8::ArrayBuffer::Allocator {
+  std::unique_ptr<Allocator> allocator_ =
+      std::unique_ptr<Allocator>(NewDefaultAllocator());
+
  public:
-  virtual void* Allocate(size_t length) {
+  void* Reserve(size_t length) override { return allocator_->Reserve(length); }
+
+  void Free(void*, size_t) override = 0;
+
+  void Free(void* data, size_t length, AllocationMode mode) override {
+    switch (mode) {
+      case AllocationMode::kNormal: {
+        return Free(data, length);
+      }
+      case AllocationMode::kReservation: {
+        return allocator_->Free(data, length, mode);
+      }
+    }
+  }
+
+  void SetProtection(void* data, size_t length,
+                     Protection protection) override {
+    allocator_->SetProtection(data, length, protection);
+  }
+};
+
+class ShellArrayBufferAllocator : public ArrayBufferAllocatorBase {
+ public:
+  void* Allocate(size_t length) override {
 #if USE_VM
     if (RoundToPageSize(&length)) {
       void* data = VirtualMemoryAllocate(length);
@@ -95,7 +123,7 @@ class ShellArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
     void* data = AllocateUninitialized(length);
     return data == NULL ? data : memset(data, 0, length);
   }
-  virtual void* AllocateUninitialized(size_t length) {
+  void* AllocateUninitialized(size_t length) override {
 #if USE_VM
     if (RoundToPageSize(&length)) return VirtualMemoryAllocate(length);
 #endif
@@ -107,7 +135,7 @@ class ShellArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
     return malloc(length);
 #endif
   }
-  virtual void Free(void* data, size_t length) {
+  void Free(void* data, size_t length) override {
 #if USE_VM
     if (RoundToPageSize(&length)) {
       base::VirtualMemory::ReleaseRegion(data, length);
@@ -139,18 +167,28 @@ class ShellArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
 #endif
 };
 
+class MockArrayBufferAllocator : public ArrayBufferAllocatorBase {
+  const size_t kAllocationLimit = 10 * MB;
+  size_t get_actual_length(size_t length) const {
+    return length > kAllocationLimit ? base::OS::CommitPageSize() : length;
+  }
 
-class MockArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
  public:
   void* Allocate(size_t length) override {
-    size_t actual_length = length > 10 * MB ? 1 : length;
+    const size_t actual_length = get_actual_length(length);
     void* data = AllocateUninitialized(actual_length);
     return data == NULL ? data : memset(data, 0, actual_length);
   }
   void* AllocateUninitialized(size_t length) override {
-    return length > 10 * MB ? malloc(1) : malloc(length);
+    return malloc(get_actual_length(length));
   }
   void Free(void* p, size_t) override { free(p); }
+  void Free(void* data, size_t length, AllocationMode mode) override {
+    ArrayBufferAllocatorBase::Free(data, get_actual_length(length), mode);
+  }
+  void* Reserve(size_t length) override {
+    return ArrayBufferAllocatorBase::Reserve(get_actual_length(length));
+  }
 };
 
 
@@ -422,6 +460,8 @@ base::LazyMutex Shell::workers_mutex_;
 bool Shell::allow_new_workers_ = true;
 i::List<Worker*> Shell::workers_;
 std::vector<ExternalizedContents> Shell::externalized_contents_;
+base::LazyMutex Shell::isolate_status_lock_;
+std::map<v8::Isolate*, bool> Shell::isolate_status_;
 
 Global<Context> Shell::evaluation_context_;
 ArrayBuffer::Allocator* Shell::array_buffer_allocator;
@@ -1345,6 +1385,15 @@ void Shell::Quit(const v8::FunctionCallbackInfo<v8::Value>& args) {
                  const_cast<v8::FunctionCallbackInfo<v8::Value>*>(&args));
 }
 
+// Note that both WaitUntilDone and NotifyDone are no-op when
+// --verify-predictable. See comment in Shell::EnsureEventLoopInitialized.
+void Shell::WaitUntilDone(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  SetWaitUntilDone(args.GetIsolate(), true);
+}
+
+void Shell::NotifyDone(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  SetWaitUntilDone(args.GetIsolate(), false);
+}
 
 void Shell::Version(const v8::FunctionCallbackInfo<v8::Value>& args) {
   args.GetReturnValue().Set(
@@ -1582,6 +1631,19 @@ Local<ObjectTemplate> Shell::CreateGlobalTemplate(Isolate* isolate) {
             .ToLocalChecked(),
         FunctionTemplate::New(isolate, Quit));
   }
+  Local<ObjectTemplate> test_template = ObjectTemplate::New(isolate);
+  global_template->Set(
+      String::NewFromUtf8(isolate, "testRunner", NewStringType::kNormal)
+          .ToLocalChecked(),
+      test_template);
+  test_template->Set(
+      String::NewFromUtf8(isolate, "notifyDone", NewStringType::kNormal)
+          .ToLocalChecked(),
+      FunctionTemplate::New(isolate, NotifyDone));
+  test_template->Set(
+      String::NewFromUtf8(isolate, "waitUntilDone", NewStringType::kNormal)
+          .ToLocalChecked(),
+      FunctionTemplate::New(isolate, WaitUntilDone));
   global_template->Set(
       String::NewFromUtf8(isolate, "version", NewStringType::kNormal)
           .ToLocalChecked(),
@@ -2266,6 +2328,8 @@ void SourceGroup::ExecuteInThread() {
   create_params.host_import_module_dynamically_callback_ =
       Shell::HostImportModuleDynamically;
   Isolate* isolate = Isolate::New(create_params);
+
+  Shell::EnsureEventLoopInitialized(isolate);
   D8Console console(isolate);
   debug::SetConsoleDelegate(isolate, &console);
   for (int i = 0; i < Shell::options.stress_runs; ++i) {
@@ -2286,6 +2350,7 @@ void SourceGroup::ExecuteInThread() {
         DisposeModuleEmbedderData(context);
       }
       Shell::CollectGarbage(isolate);
+      Shell::CompleteMessageLoop(isolate);
     }
     done_semaphore_.Signal();
   }
@@ -2602,6 +2667,9 @@ bool Shell::SetOptions(int argc, char* argv[]) {
     } else if (strncmp(argv[i], "--lcov=", 7) == 0) {
       options.lcov_file = argv[i] + 7;
       argv[i] = NULL;
+    } else if (strcmp(argv[i], "--disable-in-process-stack-traces") == 0) {
+      options.disable_in_process_stack_traces = true;
+      argv[i] = NULL;
     }
   }
 
@@ -2643,6 +2711,7 @@ int Shell::RunMain(Isolate* isolate, int argc, char* argv[], bool last_run) {
     options.isolate_sources[i].StartExecuteInThread();
   }
   {
+    EnsureEventLoopInitialized(isolate);
     if (options.lcov_file) {
       debug::Coverage::SelectMode(isolate, debug::Coverage::kPreciseCount);
     }
@@ -2665,6 +2734,7 @@ int Shell::RunMain(Isolate* isolate, int argc, char* argv[], bool last_run) {
     WriteLcovData(isolate, options.lcov_file);
   }
   CollectGarbage(isolate);
+  CompleteMessageLoop(isolate);
   for (int i = 1; i < options.num_isolates; ++i) {
     if (last_run) {
       options.isolate_sources[i].JoinThread();
@@ -2692,24 +2762,55 @@ void Shell::CollectGarbage(Isolate* isolate) {
   }
 }
 
+void Shell::EnsureEventLoopInitialized(Isolate* isolate) {
+  // When using PredictablePlatform (i.e. FLAG_verify_predictable),
+  // we don't need event loop support, because tasks are completed
+  // immediately - both background and foreground ones.
+  if (!i::FLAG_verify_predictable) {
+    v8::platform::EnsureEventLoopInitialized(g_platform, isolate);
+    SetWaitUntilDone(isolate, false);
+  }
+}
+
+void Shell::SetWaitUntilDone(Isolate* isolate, bool value) {
+  base::LockGuard<base::Mutex> guard(isolate_status_lock_.Pointer());
+  if (isolate_status_.count(isolate) == 0) {
+    isolate_status_.insert(std::make_pair(isolate, value));
+  } else {
+    isolate_status_[isolate] = value;
+  }
+}
+
+bool Shell::IsWaitUntilDone(Isolate* isolate) {
+  base::LockGuard<base::Mutex> guard(isolate_status_lock_.Pointer());
+  DCHECK_GT(isolate_status_.count(isolate), 0);
+  return isolate_status_[isolate];
+}
+
+void Shell::CompleteMessageLoop(Isolate* isolate) {
+  // See comment in EnsureEventLoopInitialized.
+  if (i::FLAG_verify_predictable) return;
+  while (v8::platform::PumpMessageLoop(
+      g_platform, isolate,
+      Shell::IsWaitUntilDone(isolate)
+          ? platform::MessageLoopBehavior::kWaitForWork
+          : platform::MessageLoopBehavior::kDoNotWait)) {
+    isolate->RunMicrotasks();
+  }
+  v8::platform::RunIdleTasks(g_platform, isolate,
+                             50.0 / base::Time::kMillisecondsPerSecond);
+}
+
 void Shell::EmptyMessageQueues(Isolate* isolate) {
   if (i::FLAG_verify_predictable) return;
-  while (true) {
-    // Pump the message loop until it is empty.
-    while (v8::platform::PumpMessageLoop(g_platform, isolate)) {
-      isolate->RunMicrotasks();
-    }
-    // Run the idle tasks.
-    v8::platform::RunIdleTasks(g_platform, isolate,
-                               50.0 / base::Time::kMillisecondsPerSecond);
-    // If there are still outstanding waiters, sleep a little (to wait for
-    // background tasks) and then try everything again.
-    if (reinterpret_cast<i::Isolate*>(isolate)->GetWaitCountForTesting() > 0) {
-      base::OS::Sleep(base::TimeDelta::FromMilliseconds(1));
-    } else {
-      break;
-    }
+  // Pump the message loop until it is empty.
+  while (v8::platform::PumpMessageLoop(
+      g_platform, isolate, platform::MessageLoopBehavior::kDoNotWait)) {
+    isolate->RunMicrotasks();
   }
+  // Run the idle tasks.
+  v8::platform::RunIdleTasks(g_platform, isolate,
+                             50.0 / base::Time::kMillisecondsPerSecond);
 }
 
 class Serializer : public ValueSerializer::Delegate {
@@ -2961,10 +3062,17 @@ int Shell::Main(int argc, char* argv[]) {
 #endif  // defined(_WIN32) || defined(_WIN64)
   if (!SetOptions(argc, argv)) return 1;
   v8::V8::InitializeICUDefaultLocation(argv[0], options.icu_data_file);
+
+  v8::platform::InProcessStackDumping in_process_stack_dumping =
+      options.disable_in_process_stack_traces
+          ? v8::platform::InProcessStackDumping::kDisabled
+          : v8::platform::InProcessStackDumping::kEnabled;
+
   g_platform = i::FLAG_verify_predictable
                    ? new PredictablePlatform()
                    : v8::platform::CreateDefaultPlatform(
-                         0, v8::platform::IdleTaskSupport::kEnabled);
+                         0, v8::platform::IdleTaskSupport::kEnabled,
+                         in_process_stack_dumping);
 
   platform::tracing::TracingController* tracing_controller;
   if (options.trace_enabled) {

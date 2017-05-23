@@ -79,16 +79,14 @@ class AsmJsParser {
   };
 
   struct VarInfo {
-    AsmType* type;
-    WasmFunctionBuilder* function_builder;
-    FunctionImportInfo* import;
-    int32_t mask;
-    uint32_t index;
-    VarKind kind;
-    bool mutable_variable;
-    bool function_defined;
-
-    VarInfo();
+    AsmType* type = AsmType::None();
+    WasmFunctionBuilder* function_builder = nullptr;
+    FunctionImportInfo* import = nullptr;
+    uint32_t mask = 0;
+    uint32_t index = 0;
+    VarKind kind = VarKind::kUnused;
+    bool mutable_variable = true;
+    bool function_defined = false;
   };
 
   struct GlobalImport {
@@ -271,12 +269,11 @@ class AsmJsParser {
   FunctionSig* ConvertSignature(AsmType* return_type,
                                 const std::vector<AsmType*>& params);
 
-  // 6.1 ValidateModule
-  void ValidateModule();
-  void ValidateModuleParameters();
-  void ValidateModuleVars();
+  void ValidateModule();            // 6.1 ValidateModule
+  void ValidateModuleParameters();  // 6.1 ValidateModule - parameters
+  void ValidateModuleVars();        // 6.1 ValidateModule - variables
   void ValidateModuleVar(bool mutable_variable);
-  bool ValidateModuleVarImport(VarInfo* info, bool mutable_variable);
+  void ValidateModuleVarImport(VarInfo* info, bool mutable_variable);
   void ValidateModuleVarStdlib(VarInfo* info);
   void ValidateModuleVarNewStdlib(VarInfo* info);
   void ValidateModuleVarFromGlobal(VarInfo* info, bool mutable_variable);
@@ -287,7 +284,7 @@ class AsmJsParser {
   void ValidateFunctionParams(std::vector<AsmType*>* params);
   void ValidateFunctionLocals(size_t param_count,
                               std::vector<ValueType>* locals);
-  void ValidateStatement();              // ValidateStatement
+  void ValidateStatement();              // 6.5 ValidateStatement
   void Block();                          // 6.5.1 Block
   void ExpressionStatement();            // 6.5.2 ExpressionStatement
   void EmptyStatement();                 // 6.5.3 EmptyStatement

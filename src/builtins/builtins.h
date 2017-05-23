@@ -64,7 +64,7 @@ class Builtins {
   Handle<Code> InterpreterPushArgsThenConstruct(InterpreterPushArgsMode mode);
   Handle<Code> NewFunctionContext(ScopeType scope_type);
   Handle<Code> NewCloneShallowArray(AllocationSiteMode allocation_mode);
-  Handle<Code> NewCloneShallowObject(int length);
+  Handle<Code> JSConstructStubGeneric();
 
   Code* builtin(Name name) {
     // Code::cast cannot be used here since we access builtins
@@ -123,8 +123,8 @@ class Builtins {
 
   static void Generate_Call(MacroAssembler* masm, ConvertReceiverMode mode,
                             TailCallMode tail_call_mode);
-  static void Generate_CallForwardVarargs(MacroAssembler* masm,
-                                          Handle<Code> code);
+
+  static void Generate_ForwardVarargs(MacroAssembler* masm, Handle<Code> code);
 
   static void Generate_InterpreterPushArgsThenCallImpl(
       MacroAssembler* masm, ConvertReceiverMode receiver_mode,

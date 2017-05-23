@@ -346,15 +346,14 @@ Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
   Address old_mem_start = nullptr;
   uint32_t old_size = 0;
   if (!old_buffer.is_null()) {
-    DCHECK(old_buffer->byte_length()->IsNumber());
     old_mem_start = static_cast<Address>(old_buffer->backing_store());
-    old_size = old_buffer->byte_length()->Number();
+    CHECK(old_buffer->byte_length()->ToUint32(&old_size));
   }
+  DCHECK_EQ(0, old_size % WasmModule::kPageSize);
+  uint32_t old_pages = old_size / WasmModule::kPageSize;
   DCHECK_GE(std::numeric_limits<uint32_t>::max(),
             old_size + pages * WasmModule::kPageSize);
-  uint32_t new_size = old_size + pages * WasmModule::kPageSize;
-  if (new_size <= old_size || max_pages * WasmModule::kPageSize < new_size ||
-      FLAG_wasm_max_mem_pages * WasmModule::kPageSize < new_size) {
+  if (old_pages > max_pages || pages > max_pages - old_pages) {
     return Handle<JSArrayBuffer>::null();
   }
 
@@ -363,6 +362,8 @@ Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
   const bool enable_guard_regions =
       (old_buffer.is_null() && EnableGuardRegions()) ||
       (!old_buffer.is_null() && old_buffer->has_guard_region());
+  size_t new_size =
+      static_cast<size_t>(old_pages + pages) * WasmModule::kPageSize;
   Handle<JSArrayBuffer> new_buffer =
       NewArrayBuffer(isolate, new_size, enable_guard_regions);
   if (new_buffer.is_null()) return new_buffer;
@@ -476,21 +477,14 @@ int32_t WasmMemoryObject::Grow(Isolate* isolate,
   Handle<JSArrayBuffer> new_buffer;
   // Return current size if grow by 0.
   if (pages == 0) {
-    // Even for pages == 0, we need to attach a new JSArrayBuffer and neuter the
-    // old one to be spec compliant.
-    if (!old_buffer.is_null() && old_buffer->backing_store() != nullptr) {
-      new_buffer = SetupArrayBuffer(isolate, old_buffer->backing_store(),
-                                    old_size, old_buffer->is_external(),
-                                    old_buffer->has_guard_region());
+    // Even for pages == 0, we need to attach a new JSArrayBuffer with the same
+    // backing store and neuter the old one to be spec compliant.
+    if (!old_buffer.is_null() && old_size != 0) {
+      new_buffer = SetupArrayBuffer(
+          isolate, old_buffer->allocation_base(),
+          old_buffer->allocation_length(), old_buffer->backing_store(),
+          old_size, old_buffer->is_external(), old_buffer->has_guard_region());
       memory_object->set_buffer(*new_buffer);
-      old_buffer->set_is_neuterable(true);
-      if (!old_buffer->has_guard_region()) {
-        old_buffer->set_is_external(true);
-        isolate->heap()->UnregisterArrayBuffer(*old_buffer);
-      }
-      // Neuter but don't free the memory because it is now being used by
-      // new_buffer.
-      old_buffer->Neuter();
     }
     DCHECK_EQ(0, old_size % WasmModule::kPageSize);
     return old_size / WasmModule::kPageSize;
@@ -812,7 +806,9 @@ void WasmSharedModuleData::ReinitializeAfterDeserialization(
         DecodeWasmModule(isolate, start, end, false, kWasmOrigin);
     CHECK(result.ok());
     CHECK_NOT_NULL(result.val);
-    module = const_cast<WasmModule*>(result.val);
+    // Take ownership of the WasmModule and immediately transfer it to the
+    // WasmModuleWrapper below.
+    module = result.val.release();
   }
 
   Handle<WasmModuleWrapper> module_wrapper =
@@ -1553,7 +1549,7 @@ MaybeHandle<FixedArray> WasmCompiledModule::CheckBreakPoints(int position) {
   return isolate->debug()->GetHitBreakPointObjects(breakpoint_objects);
 }
 
-MaybeHandle<Code> WasmCompiledModule::CompileLazy(
+Handle<Code> WasmCompiledModule::CompileLazy(
     Isolate* isolate, Handle<WasmInstanceObject> instance, Handle<Code> caller,
     int offset, int func_index, bool patch_caller) {
   isolate->set_context(*instance->compiled_module()->native_context());

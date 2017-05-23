@@ -211,7 +211,6 @@ const char* CodeStub::MajorName(CodeStub::Major major_key) {
       return "<NoCache>Stub";
     case NUMBER_OF_IDS:
       UNREACHABLE();
-      return NULL;
   }
   return NULL;
 }
@@ -385,7 +384,6 @@ InlineCacheState CompareICStub::GetICState() const {
       return ::v8::internal::GENERIC;
   }
   UNREACHABLE();
-  return ::v8::internal::UNINITIALIZED;
 }
 
 
@@ -855,10 +853,6 @@ TF_STUB(GetPropertyStub, CodeStubAssembler) {
         Use(next_holder);
         Goto(if_bailout);
       };
-
-  // Ensure that the {object} is actually a JSReceiver.
-  Callable callable = CodeFactory::ToObject(isolate());
-  object = CallStub(callable, context, object);
 
   TryPrototypeChainLookup(object, key, lookup_property_in_holder,
                           lookup_element_in_holder, &return_undefined,

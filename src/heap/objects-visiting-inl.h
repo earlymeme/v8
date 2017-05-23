@@ -422,49 +422,16 @@ void StaticMarkingVisitor<StaticVisitor>::VisitSharedFunctionInfo(
   if (shared->ic_age() != heap->global_ic_age()) {
     shared->ResetForNewContext(heap->global_ic_age());
   }
-  MarkCompactCollector* collector = heap->mark_compact_collector();
-  if (collector->is_code_flushing_enabled()) {
-    if (IsFlushable(heap, shared)) {
-      // This function's code looks flushable. But we have to postpone
-      // the decision until we see all functions that point to the same
-      // SharedFunctionInfo because some of them might be optimized.
-      // That would also make the non-optimized version of the code
-      // non-flushable, because it is required for bailing out from
-      // optimized code.
-      collector->code_flusher()->AddCandidate(shared);
-      // Treat the reference to the code object weakly.
-      VisitSharedFunctionInfoWeakCode(map, object);
-      return;
-    }
-  }
-  VisitSharedFunctionInfoStrongCode(map, object);
+  FixedBodyVisitor<StaticVisitor, SharedFunctionInfo::BodyDescriptor,
+                   void>::Visit(map, object);
 }
 
 
 template <typename StaticVisitor>
 void StaticMarkingVisitor<StaticVisitor>::VisitJSFunction(Map* map,
                                                           HeapObject* object) {
-  Heap* heap = map->GetHeap();
-  JSFunction* function = JSFunction::cast(object);
-  MarkCompactCollector* collector = heap->mark_compact_collector();
-  if (collector->is_code_flushing_enabled()) {
-    if (IsFlushable(heap, function)) {
-      // This function's code looks flushable. But we have to postpone
-      // the decision until we see all functions that point to the same
-      // SharedFunctionInfo because some of them might be optimized.
-      // That would also make the non-optimized version of the code
-      // non-flushable, because it is required for bailing out from
-      // optimized code.
-      collector->code_flusher()->AddCandidate(function);
-      // Treat the reference to the code object weakly.
-      VisitJSFunctionWeakCode(map, object);
-      return;
-    } else {
-      // Visit all unoptimized code objects to prevent flushing them.
-      StaticVisitor::MarkObject(heap, function->shared()->code());
-    }
-  }
-  VisitJSFunctionStrongCode(map, object);
+  FlexibleBodyVisitor<StaticVisitor, JSFunction::BodyDescriptorStrongCode,
+                      void>::Visit(map, object);
 }
 
 template <typename StaticVisitor>
@@ -508,137 +475,8 @@ inline static bool HasSourceCode(Heap* heap, SharedFunctionInfo* info) {
          (reinterpret_cast<Script*>(info->script())->source() != undefined);
 }
 
-
-template <typename StaticVisitor>
-bool StaticMarkingVisitor<StaticVisitor>::IsFlushable(Heap* heap,
-                                                      JSFunction* function) {
-  SharedFunctionInfo* shared_info = function->shared();
-
-  // Code is either on stack, in compilation cache or referenced
-  // by optimized version of function.
-  if (ObjectMarking::IsBlackOrGrey(function->code(),
-                                   MarkingState::Internal(function->code()))) {
-    return false;
-  }
-
-  // We do not (yet) flush code for optimized functions.
-  if (function->code() != shared_info->code()) {
-    return false;
-  }
-
-  // Check age of optimized code.
-  if (FLAG_age_code && !function->code()->IsOld()) {
-    return false;
-  }
-
-  return IsFlushable(heap, shared_info);
-}
-
-
-template <typename StaticVisitor>
-bool StaticMarkingVisitor<StaticVisitor>::IsFlushable(
-    Heap* heap, SharedFunctionInfo* shared_info) {
-  // Code is either on stack, in compilation cache or referenced
-  // by optimized version of function.
-  if (ObjectMarking::IsBlackOrGrey(
-          shared_info->code(), MarkingState::Internal(shared_info->code()))) {
-    return false;
-  }
-
-  // The function must be compiled and have the source code available,
-  // to be able to recompile it in case we need the function again.
-  if (!(shared_info->is_compiled() && HasSourceCode(heap, shared_info))) {
-    return false;
-  }
-
-  // We never flush code for API functions.
-  if (shared_info->IsApiFunction()) {
-    return false;
-  }
-
-  // Only flush code for functions.
-  if (shared_info->code()->kind() != Code::FUNCTION) {
-    return false;
-  }
-
-  // Function must be lazy compilable.
-  if (!shared_info->allows_lazy_compilation()) {
-    return false;
-  }
-
-  // We do not (yet?) flush code for generator functions, or async functions,
-  // because we don't know if there are still live activations
-  // (generator objects) on the heap.
-  if (IsResumableFunction(shared_info->kind())) {
-    return false;
-  }
-
-  // If this is a full script wrapped in a function we do not flush the code.
-  if (shared_info->is_toplevel()) {
-    return false;
-  }
-
-  // The function must be user code.
-  if (!shared_info->IsUserJavaScript()) {
-    return false;
-  }
-
-  // Maintain debug break slots in the code.
-  if (shared_info->HasDebugCode()) {
-    return false;
-  }
-
-  // If this is a function initialized with %SetCode then the one-to-one
-  // relation between SharedFunctionInfo and Code is broken.
-  if (shared_info->dont_flush()) {
-    return false;
-  }
-
-  // Check age of code. If code aging is disabled we never flush.
-  if (!FLAG_age_code || !shared_info->code()->IsOld()) {
-    return false;
-  }
-
-  return true;
-}
-
-template <typename StaticVisitor>
-void StaticMarkingVisitor<StaticVisitor>::VisitSharedFunctionInfoStrongCode(
-    Map* map, HeapObject* object) {
-  FixedBodyVisitor<StaticVisitor, SharedFunctionInfo::BodyDescriptor,
-                   void>::Visit(map, object);
-}
-
-template <typename StaticVisitor>
-void StaticMarkingVisitor<StaticVisitor>::VisitSharedFunctionInfoWeakCode(
-    Map* map, HeapObject* object) {
-  // Skip visiting kCodeOffset as it is treated weakly here.
-  STATIC_ASSERT(SharedFunctionInfo::kCodeOffset <
-                SharedFunctionInfo::BodyDescriptorWeakCode::kStartOffset);
-  FixedBodyVisitor<StaticVisitor, SharedFunctionInfo::BodyDescriptorWeakCode,
-                   void>::Visit(map, object);
-}
-
-template <typename StaticVisitor>
-void StaticMarkingVisitor<StaticVisitor>::VisitJSFunctionStrongCode(
-    Map* map, HeapObject* object) {
-  typedef FlexibleBodyVisitor<StaticVisitor,
-                              JSFunction::BodyDescriptorStrongCode,
-                              void> JSFunctionStrongCodeBodyVisitor;
-  JSFunctionStrongCodeBodyVisitor::Visit(map, object);
-}
-
-template <typename StaticVisitor>
-void StaticMarkingVisitor<StaticVisitor>::VisitJSFunctionWeakCode(
-    Map* map, HeapObject* object) {
-  typedef FlexibleBodyVisitor<StaticVisitor, JSFunction::BodyDescriptorWeakCode,
-                              void> JSFunctionWeakCodeBodyVisitor;
-  JSFunctionWeakCodeBodyVisitor::Visit(map, object);
-}
-
 template <typename ResultType, typename ConcreteVisitor>
-ResultType HeapVisitor<ResultType, ConcreteVisitor>::IterateBody(
-    HeapObject* object) {
+ResultType HeapVisitor<ResultType, ConcreteVisitor>::Visit(HeapObject* object) {
   Map* map = object->map();
   ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   switch (static_cast<VisitorId>(map->visitor_id())) {
@@ -669,14 +507,28 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::IterateBody(
   return ResultType();
 }
 
-#define VISIT(type)                                                         \
-  template <typename ResultType, typename ConcreteVisitor>                  \
-  ResultType HeapVisitor<ResultType, ConcreteVisitor>::Visit##type(         \
-      Map* map, type* object) {                                             \
-    int size = type::BodyDescriptor::SizeOf(map, object);                   \
-    type::BodyDescriptor::IterateBody(object, size,                         \
-                                      static_cast<ConcreteVisitor*>(this)); \
-    return static_cast<ResultType>(size);                                   \
+template <typename ResultType, typename ConcreteVisitor>
+void HeapVisitor<ResultType, ConcreteVisitor>::VisitMapPointer(
+    HeapObject* host, HeapObject** map) {
+  static_cast<ConcreteVisitor*>(this)->VisitPointer(
+      host, reinterpret_cast<Object**>(map));
+}
+
+template <typename ResultType, typename ConcreteVisitor>
+bool HeapVisitor<ResultType, ConcreteVisitor>::ShouldVisit(HeapObject* object) {
+  return true;
+}
+
+#define VISIT(type)                                                 \
+  template <typename ResultType, typename ConcreteVisitor>          \
+  ResultType HeapVisitor<ResultType, ConcreteVisitor>::Visit##type( \
+      Map* map, type* object) {                                     \
+    ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this); \
+    if (!visitor->ShouldVisit(object)) return ResultType();         \
+    int size = type::BodyDescriptor::SizeOf(map, object);           \
+    visitor->VisitMapPointer(object, object->map_slot());           \
+    type::BodyDescriptor::IterateBody(object, size, visitor);       \
+    return static_cast<ResultType>(size);                           \
   }
 TYPED_VISITOR_ID_LIST(VISIT)
 #undef VISIT
@@ -684,7 +536,10 @@ TYPED_VISITOR_ID_LIST(VISIT)
 template <typename ResultType, typename ConcreteVisitor>
 ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitShortcutCandidate(
     Map* map, ConsString* object) {
+  ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
+  if (!visitor->ShouldVisit(object)) return ResultType();
   int size = ConsString::BodyDescriptor::SizeOf(map, object);
+  visitor->VisitMapPointer(object, object->map_slot());
   ConsString::BodyDescriptor::IterateBody(object, size,
                                           static_cast<ConcreteVisitor*>(this));
   return static_cast<ResultType>(size);
@@ -693,7 +548,10 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitShortcutCandidate(
 template <typename ResultType, typename ConcreteVisitor>
 ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitNativeContext(
     Map* map, Context* object) {
+  ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
+  if (!visitor->ShouldVisit(object)) return ResultType();
   int size = Context::BodyDescriptor::SizeOf(map, object);
+  visitor->VisitMapPointer(object, object->map_slot());
   Context::BodyDescriptor::IterateBody(object, size,
                                        static_cast<ConcreteVisitor*>(this));
   return static_cast<ResultType>(size);
@@ -702,14 +560,20 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitNativeContext(
 template <typename ResultType, typename ConcreteVisitor>
 ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitDataObject(
     Map* map, HeapObject* object) {
+  ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
+  if (!visitor->ShouldVisit(object)) return ResultType();
   int size = map->instance_size();
+  visitor->VisitMapPointer(object, object->map_slot());
   return static_cast<ResultType>(size);
 }
 
 template <typename ResultType, typename ConcreteVisitor>
 ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitJSObjectFast(
     Map* map, JSObject* object) {
+  ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
+  if (!visitor->ShouldVisit(object)) return ResultType();
   int size = JSObject::FastBodyDescriptor::SizeOf(map, object);
+  visitor->VisitMapPointer(object, object->map_slot());
   JSObject::FastBodyDescriptor::IterateBody(
       object, size, static_cast<ConcreteVisitor*>(this));
   return static_cast<ResultType>(size);
@@ -717,7 +581,10 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitJSObjectFast(
 template <typename ResultType, typename ConcreteVisitor>
 ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitJSApiObject(
     Map* map, JSObject* object) {
+  ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
+  if (!visitor->ShouldVisit(object)) return ResultType();
   int size = JSObject::BodyDescriptor::SizeOf(map, object);
+  visitor->VisitMapPointer(object, object->map_slot());
   JSObject::BodyDescriptor::IterateBody(object, size,
                                         static_cast<ConcreteVisitor*>(this));
   return static_cast<ResultType>(size);
@@ -725,7 +592,10 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitJSApiObject(
 template <typename ResultType, typename ConcreteVisitor>
 ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitStruct(
     Map* map, HeapObject* object) {
+  ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
+  if (!visitor->ShouldVisit(object)) return ResultType();
   int size = map->instance_size();
+  visitor->VisitMapPointer(object, object->map_slot());
   StructBodyDescriptor::IterateBody(object, size,
                                     static_cast<ConcreteVisitor*>(this));
   return static_cast<ResultType>(size);
@@ -733,6 +603,9 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitStruct(
 template <typename ResultType, typename ConcreteVisitor>
 ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitFreeSpace(
     Map* map, FreeSpace* object) {
+  ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
+  if (!visitor->ShouldVisit(object)) return ResultType();
+  visitor->VisitMapPointer(object, object->map_slot());
   return static_cast<ResultType>(FreeSpace::cast(object)->size());
 }
 

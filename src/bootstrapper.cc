@@ -178,7 +178,6 @@ class Genesis BASE_EMBEDDED {
 
   void InstallOneBuiltinFunction(Handle<Object> prototype, const char* method,
                                  Builtins::Name name);
-  void InitializeGlobal_experimental_fast_array_builtins();
 
   Handle<JSFunction> InstallArrayBuffer(Handle<JSObject> target,
                                         const char* name,
@@ -1311,7 +1310,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     native_context()->set_object_is_sealed(*object_is_sealed);
 
     Handle<JSFunction> object_keys = SimpleInstallFunction(
-        object_function, "keys", Builtins::kObjectKeys, 1, false);
+        object_function, "keys", Builtins::kObjectKeys, 1, true);
     native_context()->set_object_keys(*object_keys);
     SimpleInstallFunction(object_function, factory->entries_string(),
                           Builtins::kObjectEntries, 1, false);
@@ -1810,6 +1809,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 #endif  // V8_INTL_SUPPORT
     SimpleInstallFunction(prototype, "replace",
                           Builtins::kStringPrototypeReplace, 2, true);
+    SimpleInstallFunction(prototype, "slice", Builtins::kStringPrototypeSlice,
+                          2, false);
     SimpleInstallFunction(prototype, "split", Builtins::kStringPrototypeSplit,
                           2, true);
     SimpleInstallFunction(prototype, "substr", Builtins::kStringPrototypeSubstr,
@@ -2286,7 +2287,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
       {
         Handle<JSFunction> fun = SimpleCreateFunction(
             isolate, factory->InternalizeUtf8String("[Symbol.replace]"),
-            Builtins::kRegExpPrototypeReplace, 2, true);
+            Builtins::kRegExpPrototypeReplace, 2, false);
         InstallFunction(prototype, fun, factory->replace_symbol(), DONT_ENUM);
       }
 
@@ -2300,7 +2301,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
       {
         Handle<JSFunction> fun = SimpleCreateFunction(
             isolate, factory->InternalizeUtf8String("[Symbol.split]"),
-            Builtins::kRegExpPrototypeSplit, 2, true);
+            Builtins::kRegExpPrototypeSplit, 2, false);
         InstallFunction(prototype, fun, factory->split_symbol(), DONT_ENUM);
       }
 
@@ -2778,18 +2779,30 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     // TODO(caitp): alphasort accessors/methods
     SimpleInstallFunction(prototype, "copyWithin",
                           Builtins::kTypedArrayPrototypeCopyWithin, 2, false);
+    SimpleInstallFunction(prototype, "every",
+                          Builtins::kTypedArrayPrototypeEvery, 1, false);
     SimpleInstallFunction(prototype, "fill",
                           Builtins::kTypedArrayPrototypeFill, 1, false);
+    SimpleInstallFunction(prototype, "forEach",
+                          Builtins::kTypedArrayPrototypeForEach, 1, false);
     SimpleInstallFunction(prototype, "includes",
                           Builtins::kTypedArrayPrototypeIncludes, 1, false);
     SimpleInstallFunction(prototype, "indexOf",
                           Builtins::kTypedArrayPrototypeIndexOf, 1, false);
     SimpleInstallFunction(prototype, "lastIndexOf",
                           Builtins::kTypedArrayPrototypeLastIndexOf, 1, false);
+    SimpleInstallFunction(prototype, "map", Builtins::kTypedArrayPrototypeMap,
+                          1, false);
     SimpleInstallFunction(prototype, "reverse",
                           Builtins::kTypedArrayPrototypeReverse, 0, false);
+    SimpleInstallFunction(prototype, "reduce",
+                          Builtins::kTypedArrayPrototypeReduce, 1, false);
+    SimpleInstallFunction(prototype, "reduceRight",
+                          Builtins::kTypedArrayPrototypeReduceRight, 1, false);
     SimpleInstallFunction(prototype, "slice",
                           Builtins::kTypedArrayPrototypeSlice, 2, false);
+    SimpleInstallFunction(prototype, "some", Builtins::kTypedArrayPrototypeSome,
+                          1, false);
   }
 
   {  // -- T y p e d A r r a y s
@@ -3243,8 +3256,6 @@ void Genesis::InitializeExperimentalGlobal() {
   HARMONY_STAGED(FEATURE_INITIALIZE_GLOBAL)
   HARMONY_SHIPPING(FEATURE_INITIALIZE_GLOBAL)
 #undef FEATURE_INITIALIZE_GLOBAL
-
-  InitializeGlobal_experimental_fast_array_builtins();
 }
 
 bool Bootstrapper::CompileBuiltin(Isolate* isolate, int index) {
@@ -3883,23 +3894,6 @@ void Genesis::InstallOneBuiltinFunction(Handle<Object> prototype,
       Builtins::GetBuiltinParameterCount(builtin_name));
 }
 
-void Genesis::InitializeGlobal_experimental_fast_array_builtins() {
-  if (!FLAG_experimental_fast_array_builtins) return;
-  {
-    Handle<Object> typed_array_prototype(
-        native_context()->typed_array_prototype(), isolate());
-    // Insert experimental fast TypedArray builtins here.
-    InstallOneBuiltinFunction(typed_array_prototype, "every",
-                              Builtins::kTypedArrayPrototypeEvery);
-    InstallOneBuiltinFunction(typed_array_prototype, "some",
-                              Builtins::kTypedArrayPrototypeSome);
-    InstallOneBuiltinFunction(typed_array_prototype, "reduce",
-                              Builtins::kTypedArrayPrototypeReduce);
-    InstallOneBuiltinFunction(typed_array_prototype, "reduceRight",
-                              Builtins::kTypedArrayPrototypeReduceRight);
-  }
-}
-
 void Genesis::InitializeGlobal_harmony_sharedarraybuffer() {
   if (!FLAG_harmony_sharedarraybuffer) return;
 
@@ -4084,7 +4078,7 @@ void Genesis::InitializeGlobal_icu_case_mapping() {
     SetFunction(string_prototype,
                 SimpleCreateFunction(isolate(), name,
                                      Builtins::kStringPrototypeToLowerCaseIntl,
-                                     0, false),
+                                     0, true),
                 name);
   }
   {
@@ -5115,7 +5109,7 @@ Genesis::Genesis(
     AddToWeakNativeContextList(*native_context());
     isolate->set_context(*native_context());
     isolate->counters()->contexts_created_by_snapshot()->Increment();
-#if TRACE_MAPS
+#if V8_TRACE_MAPS
     if (FLAG_trace_maps) {
       Handle<JSFunction> object_fun = isolate->object_function();
       PrintF("[TraceMap: InitialMap map= %p SFI= %d_Object ]\n",

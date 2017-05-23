@@ -1208,355 +1208,6 @@ TEST(Iteration) {
   CHECK_EQ(objs_count, ObjectsFoundInHeap(CcTest::heap(), objs, objs_count));
 }
 
-
-UNINITIALIZED_TEST(TestCodeFlushing) {
-  // If we do not flush code this test is invalid.
-  if (!FLAG_flush_code) return;
-  i::FLAG_allow_natives_syntax = true;
-  i::FLAG_optimize_for_size = false;
-  v8::Isolate::CreateParams create_params;
-  create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
-  v8::Isolate* isolate = v8::Isolate::New(create_params);
-  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  isolate->Enter();
-  Factory* factory = i_isolate->factory();
-  {
-    v8::HandleScope scope(isolate);
-    v8::Context::New(isolate)->Enter();
-    const char* source =
-        "function foo() {"
-        "  var x = 42;"
-        "  var y = 42;"
-        "  var z = x + y;"
-        "};"
-        "foo()";
-    Handle<String> foo_name = factory->InternalizeUtf8String("foo");
-
-    // This compile will add the code to the compilation cache.
-    {
-      v8::HandleScope scope(isolate);
-      CompileRun(source);
-    }
-
-    // Check function is compiled.
-    Handle<Object> func_value = Object::GetProperty(i_isolate->global_object(),
-                                                    foo_name).ToHandleChecked();
-    CHECK(func_value->IsJSFunction());
-    Handle<JSFunction> function = Handle<JSFunction>::cast(func_value);
-    CHECK(function->shared()->is_compiled());
-
-    // The code will survive at least two GCs.
-    i_isolate->heap()->CollectAllGarbage(
-        i::Heap::kFinalizeIncrementalMarkingMask,
-        i::GarbageCollectionReason::kTesting);
-    i_isolate->heap()->CollectAllGarbage(
-        i::Heap::kFinalizeIncrementalMarkingMask,
-        i::GarbageCollectionReason::kTesting);
-    CHECK(function->shared()->is_compiled());
-
-    // Simulate several GCs that use full marking.
-    const int kAgingThreshold = 6;
-    for (int i = 0; i < kAgingThreshold; i++) {
-      i_isolate->heap()->CollectAllGarbage(
-          i::Heap::kFinalizeIncrementalMarkingMask,
-          i::GarbageCollectionReason::kTesting);
-    }
-
-    // foo should no longer be in the compilation cache
-    CHECK(!function->shared()->is_compiled() || function->IsOptimized() ||
-          function->IsInterpreted());
-    CHECK(!function->is_compiled() || function->IsOptimized() ||
-          function->IsInterpreted());
-    // Call foo to get it recompiled.
-    CompileRun("foo()");
-    CHECK(function->shared()->is_compiled());
-    CHECK(function->is_compiled());
-  }
-  isolate->Exit();
-  isolate->Dispose();
-}
-
-
-TEST(TestCodeFlushingPreAged) {
-  // If we do not flush code this test is invalid.
-  if (!FLAG_flush_code) return;
-  i::FLAG_allow_natives_syntax = true;
-  i::FLAG_optimize_for_size = true;
-  CcTest::InitializeVM();
-  Isolate* isolate = CcTest::i_isolate();
-  Factory* factory = isolate->factory();
-  v8::HandleScope scope(CcTest::isolate());
-  const char* source = "function foo() {"
-                       "  var x = 42;"
-                       "  var y = 42;"
-                       "  var z = x + y;"
-                       "};"
-                       "foo()";
-  Handle<String> foo_name = factory->InternalizeUtf8String("foo");
-
-  // Compile foo, but don't run it.
-  { v8::HandleScope scope(CcTest::isolate());
-    CompileRun(source);
-  }
-
-  // Check function is compiled.
-  Handle<Object> func_value =
-      Object::GetProperty(isolate->global_object(), foo_name).ToHandleChecked();
-  CHECK(func_value->IsJSFunction());
-  Handle<JSFunction> function = Handle<JSFunction>::cast(func_value);
-  CHECK(function->shared()->is_compiled());
-
-  // The code has been run so will survive at least one GC.
-  CcTest::CollectAllGarbage();
-  CHECK(function->shared()->is_compiled());
-
-  // The code was only run once, so it should be pre-aged and collected on the
-  // next GC.
-  CcTest::CollectAllGarbage();
-  CHECK(!function->shared()->is_compiled() || function->IsOptimized() ||
-        function->IsInterpreted());
-
-  // Execute the function again twice, and ensure it is reset to the young age.
-  { v8::HandleScope scope(CcTest::isolate());
-    CompileRun("foo();"
-               "foo();");
-  }
-
-  // The code will survive at least two GC now that it is young again.
-  CcTest::CollectAllGarbage();
-  CcTest::CollectAllGarbage();
-  CHECK(function->shared()->is_compiled());
-
-  // Simulate several GCs that use full marking.
-  const int kAgingThreshold = 6;
-  for (int i = 0; i < kAgingThreshold; i++) {
-    CcTest::CollectAllGarbage();
-  }
-
-  // foo should no longer be in the compilation cache
-  CHECK(!function->shared()->is_compiled() || function->IsOptimized() ||
-        function->IsInterpreted());
-  CHECK(!function->is_compiled() || function->IsOptimized() ||
-        function->IsInterpreted());
-  // Call foo to get it recompiled.
-  CompileRun("foo()");
-  CHECK(function->shared()->is_compiled());
-  CHECK(function->is_compiled());
-}
-
-
-TEST(TestCodeFlushingIncremental) {
-  if (!i::FLAG_incremental_marking) return;
-  // If we do not flush code this test is invalid.
-  if (!FLAG_flush_code) return;
-  i::FLAG_allow_natives_syntax = true;
-  i::FLAG_optimize_for_size = false;
-  CcTest::InitializeVM();
-  Isolate* isolate = CcTest::i_isolate();
-  Factory* factory = isolate->factory();
-  v8::HandleScope scope(CcTest::isolate());
-  const char* source = "function foo() {"
-                       "  var x = 42;"
-                       "  var y = 42;"
-                       "  var z = x + y;"
-                       "};"
-                       "foo()";
-  Handle<String> foo_name = factory->InternalizeUtf8String("foo");
-
-  // This compile will add the code to the compilation cache.
-  { v8::HandleScope scope(CcTest::isolate());
-    CompileRun(source);
-  }
-
-  // Check function is compiled.
-  Handle<Object> func_value =
-      Object::GetProperty(isolate->global_object(), foo_name).ToHandleChecked();
-  CHECK(func_value->IsJSFunction());
-  Handle<JSFunction> function = Handle<JSFunction>::cast(func_value);
-  CHECK(function->shared()->is_compiled());
-
-  // The code will survive at least two GCs.
-  CcTest::CollectAllGarbage();
-  CcTest::CollectAllGarbage();
-  CHECK(function->shared()->is_compiled());
-
-  // Simulate several GCs that use incremental marking.
-  const int kAgingThreshold = 6;
-  for (int i = 0; i < kAgingThreshold; i++) {
-    heap::SimulateIncrementalMarking(CcTest::heap());
-    CcTest::CollectAllGarbage();
-  }
-  CHECK(!function->shared()->is_compiled() || function->IsOptimized() ||
-        function->IsInterpreted());
-  CHECK(!function->is_compiled() || function->IsOptimized() ||
-        function->IsInterpreted());
-
-  // This compile will compile the function again.
-  { v8::HandleScope scope(CcTest::isolate());
-    CompileRun("foo();");
-  }
-
-  // Simulate several GCs that use incremental marking but make sure
-  // the loop breaks once the function is enqueued as a candidate.
-  for (int i = 0; i < kAgingThreshold; i++) {
-    heap::SimulateIncrementalMarking(CcTest::heap());
-    if (!function->next_function_link()->IsUndefined(CcTest::i_isolate()))
-      break;
-    CcTest::CollectAllGarbage();
-  }
-
-  // Force optimization while incremental marking is active and while
-  // the function is enqueued as a candidate.
-  { v8::HandleScope scope(CcTest::isolate());
-    CompileRun("%OptimizeFunctionOnNextCall(foo); foo();");
-  }
-
-  // Simulate one final GC to make sure the candidate queue is sane.
-  CcTest::CollectAllGarbage();
-  CHECK(function->shared()->is_compiled() || !function->IsOptimized());
-  CHECK(function->is_compiled() || !function->IsOptimized());
-}
-
-
-TEST(TestCodeFlushingIncrementalScavenge) {
-  if (!FLAG_incremental_marking) return;
-  // If we do not flush code this test is invalid.
-  if (!FLAG_flush_code) return;
-  i::FLAG_allow_natives_syntax = true;
-  i::FLAG_optimize_for_size = false;
-  CcTest::InitializeVM();
-  Isolate* isolate = CcTest::i_isolate();
-  Factory* factory = isolate->factory();
-  v8::HandleScope scope(CcTest::isolate());
-  const char* source = "var foo = function() {"
-                       "  var x = 42;"
-                       "  var y = 42;"
-                       "  var z = x + y;"
-                       "};"
-                       "foo();"
-                       "var bar = function() {"
-                       "  var x = 23;"
-                       "};"
-                       "bar();";
-  Handle<String> foo_name = factory->InternalizeUtf8String("foo");
-  Handle<String> bar_name = factory->InternalizeUtf8String("bar");
-
-  // Perfrom one initial GC to enable code flushing.
-  CcTest::CollectAllGarbage();
-
-  // This compile will add the code to the compilation cache.
-  { v8::HandleScope scope(CcTest::isolate());
-    CompileRun(source);
-  }
-
-  // Check functions are compiled.
-  Handle<Object> func_value =
-      Object::GetProperty(isolate->global_object(), foo_name).ToHandleChecked();
-  CHECK(func_value->IsJSFunction());
-  Handle<JSFunction> function = Handle<JSFunction>::cast(func_value);
-  CHECK(function->shared()->is_compiled());
-  Handle<Object> func_value2 =
-      Object::GetProperty(isolate->global_object(), bar_name).ToHandleChecked();
-  CHECK(func_value2->IsJSFunction());
-  Handle<JSFunction> function2 = Handle<JSFunction>::cast(func_value2);
-  CHECK(function2->shared()->is_compiled());
-
-  // Clear references to functions so that one of them can die.
-  { v8::HandleScope scope(CcTest::isolate());
-    CompileRun("foo = 0; bar = 0;");
-  }
-
-  // Bump the code age so that flushing is triggered while the function
-  // object is still located in new-space.
-  const int kAgingThreshold = 6;
-  for (int i = 0; i < kAgingThreshold; i++) {
-    function->shared()->code()->MakeOlder();
-    function2->shared()->code()->MakeOlder();
-  }
-
-  // Simulate incremental marking so that the functions are enqueued as
-  // code flushing candidates. Then kill one of the functions. Finally
-  // perform a scavenge while incremental marking is still running.
-  heap::SimulateIncrementalMarking(CcTest::heap(), false);
-  *function2.location() = NULL;
-  CcTest::CollectGarbage(NEW_SPACE);
-
-  // Simulate one final GC to make sure the candidate queue is sane.
-  CcTest::CollectAllGarbage();
-  CHECK(!function->shared()->is_compiled() || function->IsOptimized() ||
-        function->IsInterpreted());
-  CHECK(!function->is_compiled() || function->IsOptimized() ||
-        function->IsInterpreted());
-}
-
-
-TEST(TestCodeFlushingIncrementalAbort) {
-  if (!i::FLAG_incremental_marking) return;
-  // If we do not flush code this test is invalid.
-  if (!FLAG_flush_code) return;
-  i::FLAG_allow_natives_syntax = true;
-  i::FLAG_optimize_for_size = false;
-  CcTest::InitializeVM();
-  Isolate* isolate = CcTest::i_isolate();
-  Factory* factory = isolate->factory();
-  Heap* heap = isolate->heap();
-  v8::HandleScope scope(CcTest::isolate());
-  const char* source = "function foo() {"
-                       "  var x = 42;"
-                       "  var y = 42;"
-                       "  var z = x + y;"
-                       "};"
-                       "foo()";
-  Handle<String> foo_name = factory->InternalizeUtf8String("foo");
-
-  // This compile will add the code to the compilation cache.
-  { v8::HandleScope scope(CcTest::isolate());
-    CompileRun(source);
-  }
-
-  // Check function is compiled.
-  Handle<Object> func_value =
-      Object::GetProperty(isolate->global_object(), foo_name).ToHandleChecked();
-  CHECK(func_value->IsJSFunction());
-  Handle<JSFunction> function = Handle<JSFunction>::cast(func_value);
-  CHECK(function->shared()->is_compiled());
-
-  // The code will survive at least two GCs.
-  CcTest::CollectAllGarbage();
-  CcTest::CollectAllGarbage();
-  CHECK(function->shared()->is_compiled());
-
-  // Bump the code age so that flushing is triggered.
-  const int kAgingThreshold = 6;
-  for (int i = 0; i < kAgingThreshold; i++) {
-    function->shared()->code()->MakeOlder();
-  }
-
-  // Simulate incremental marking so that the function is enqueued as
-  // code flushing candidate.
-  heap::SimulateIncrementalMarking(heap);
-
-  // Enable the debugger and add a breakpoint while incremental marking
-  // is running so that incremental marking aborts and code flushing is
-  // disabled.
-  int position = function->shared()->start_position();
-  Handle<Object> breakpoint_object(Smi::kZero, isolate);
-  EnableDebugger(CcTest::isolate());
-  isolate->debug()->SetBreakPoint(function, breakpoint_object, &position);
-  isolate->debug()->ClearBreakPoint(breakpoint_object);
-  DisableDebugger(CcTest::isolate());
-
-  // Force optimization now that code flushing is disabled.
-  { v8::HandleScope scope(CcTest::isolate());
-    CompileRun("%OptimizeFunctionOnNextCall(foo); foo();");
-  }
-
-  // Simulate one final GC to make sure the candidate queue is sane.
-  CcTest::CollectAllGarbage();
-  CHECK(function->shared()->is_compiled() || !function->IsOptimized());
-  CHECK(function->is_compiled() || !function->IsOptimized());
-}
-
 TEST(TestUseOfIncrementalBarrierOnCompileLazy) {
   if (!i::FLAG_incremental_marking) return;
   // Turn off always_opt because it interferes with running the built-in for
@@ -1601,9 +1252,9 @@ TEST(TestUseOfIncrementalBarrierOnCompileLazy) {
 }
 
 TEST(CompilationCacheCachingBehavior) {
-  // If we do not flush code, or have the compilation cache turned off, this
+  // If we do not age code, or have the compilation cache turned off, this
   // test is invalid.
-  if (!FLAG_flush_code || !FLAG_compilation_cache) {
+  if (!FLAG_age_code || !FLAG_compilation_cache) {
     return;
   }
   CcTest::InitializeVM();
@@ -1718,7 +1369,7 @@ TEST(TestInternalWeakLists) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
   v8::Local<v8::Context> ctx[kNumTestContexts];
-  if (!isolate->use_crankshaft()) return;
+  if (!isolate->use_optimizer()) return;
 
   CHECK_EQ(0, CountNativeContexts());
 
@@ -1860,7 +1511,7 @@ TEST(TestInternalWeakListsTraverseWithGC) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
   v8::Local<v8::Context> ctx[kNumTestContexts];
-  if (!isolate->use_crankshaft()) return;
+  if (!isolate->use_optimizer()) return;
 
   CHECK_EQ(0, CountNativeContexts());
 
@@ -2508,7 +2159,7 @@ TEST(InstanceOfStubWriteBarrier) {
 #endif
 
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft()) return;
+  if (!CcTest::i_isolate()->use_optimizer()) return;
   if (i::FLAG_force_marking_deque_overflows) return;
   v8::HandleScope outer_scope(CcTest::isolate());
   v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
@@ -2577,7 +2228,7 @@ TEST(ResetSharedFunctionInfoCountersDuringIncrementalMarking) {
 #endif
 
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft()) return;
+  if (!CcTest::i_isolate()->use_optimizer()) return;
   v8::HandleScope outer_scope(CcTest::isolate());
   v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
 
@@ -2622,7 +2273,7 @@ TEST(ResetSharedFunctionInfoCountersDuringMarkSweep) {
 #endif
 
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft()) return;
+  if (!CcTest::i_isolate()->use_optimizer()) return;
   v8::HandleScope outer_scope(CcTest::isolate());
   v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
 
@@ -2740,7 +2391,7 @@ TEST(IdleNotificationFinishMarking) {
 TEST(OptimizedAllocationAlwaysInNewSpace) {
   i::FLAG_allow_natives_syntax = true;
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft() || i::FLAG_always_opt) return;
+  if (!CcTest::i_isolate()->use_optimizer() || i::FLAG_always_opt) return;
   if (i::FLAG_gc_global || i::FLAG_stress_compaction) return;
   v8::HandleScope scope(CcTest::isolate());
   v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
@@ -2775,7 +2426,7 @@ TEST(OptimizedPretenuringAllocationFolding) {
   i::FLAG_allow_natives_syntax = true;
   i::FLAG_expose_gc = true;
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft() || i::FLAG_always_opt) return;
+  if (!CcTest::i_isolate()->use_optimizer() || i::FLAG_always_opt) return;
   if (i::FLAG_gc_global || i::FLAG_stress_compaction) return;
   v8::HandleScope scope(CcTest::isolate());
   v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
@@ -2826,7 +2477,7 @@ TEST(OptimizedPretenuringObjectArrayLiterals) {
   i::FLAG_allow_natives_syntax = true;
   i::FLAG_expose_gc = true;
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft() || i::FLAG_always_opt) return;
+  if (!CcTest::i_isolate()->use_optimizer() || i::FLAG_always_opt) return;
   if (i::FLAG_gc_global || i::FLAG_stress_compaction) return;
   v8::HandleScope scope(CcTest::isolate());
 
@@ -2866,7 +2517,7 @@ TEST(OptimizedPretenuringMixedInObjectProperties) {
   i::FLAG_allow_natives_syntax = true;
   i::FLAG_expose_gc = true;
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft() || i::FLAG_always_opt) return;
+  if (!CcTest::i_isolate()->use_optimizer() || i::FLAG_always_opt) return;
   if (i::FLAG_gc_global || i::FLAG_stress_compaction) return;
   v8::HandleScope scope(CcTest::isolate());
 
@@ -2924,7 +2575,7 @@ TEST(OptimizedPretenuringDoubleArrayProperties) {
   i::FLAG_allow_natives_syntax = true;
   i::FLAG_expose_gc = true;
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft() || i::FLAG_always_opt) return;
+  if (!CcTest::i_isolate()->use_optimizer() || i::FLAG_always_opt) return;
   if (i::FLAG_gc_global || i::FLAG_stress_compaction) return;
   v8::HandleScope scope(CcTest::isolate());
 
@@ -2964,7 +2615,7 @@ TEST(OptimizedPretenuringdoubleArrayLiterals) {
   i::FLAG_allow_natives_syntax = true;
   i::FLAG_expose_gc = true;
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft() || i::FLAG_always_opt) return;
+  if (!CcTest::i_isolate()->use_optimizer() || i::FLAG_always_opt) return;
   if (i::FLAG_gc_global || i::FLAG_stress_compaction) return;
   v8::HandleScope scope(CcTest::isolate());
 
@@ -3004,7 +2655,7 @@ TEST(OptimizedPretenuringNestedMixedArrayLiterals) {
   i::FLAG_allow_natives_syntax = true;
   i::FLAG_expose_gc = true;
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft() || i::FLAG_always_opt) return;
+  if (!CcTest::i_isolate()->use_optimizer() || i::FLAG_always_opt) return;
   if (i::FLAG_gc_global || i::FLAG_stress_compaction) return;
   v8::HandleScope scope(CcTest::isolate());
   v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
@@ -3054,7 +2705,7 @@ TEST(OptimizedPretenuringNestedObjectLiterals) {
   i::FLAG_allow_natives_syntax = true;
   i::FLAG_expose_gc = true;
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft() || i::FLAG_always_opt) return;
+  if (!CcTest::i_isolate()->use_optimizer() || i::FLAG_always_opt) return;
   if (i::FLAG_gc_global || i::FLAG_stress_compaction) return;
   v8::HandleScope scope(CcTest::isolate());
   v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
@@ -3105,7 +2756,7 @@ TEST(OptimizedPretenuringNestedDoubleLiterals) {
   i::FLAG_allow_natives_syntax = true;
   i::FLAG_expose_gc = true;
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft() || i::FLAG_always_opt) return;
+  if (!CcTest::i_isolate()->use_optimizer() || i::FLAG_always_opt) return;
   if (i::FLAG_gc_global || i::FLAG_stress_compaction) return;
   v8::HandleScope scope(CcTest::isolate());
   v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
@@ -3156,7 +2807,7 @@ TEST(OptimizedPretenuringNestedDoubleLiterals) {
 TEST(OptimizedAllocationArrayLiterals) {
   i::FLAG_allow_natives_syntax = true;
   CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_crankshaft() || i::FLAG_always_opt) return;
+  if (!CcTest::i_isolate()->use_optimizer() || i::FLAG_always_opt) return;
   if (i::FLAG_gc_global || i::FLAG_stress_compaction) return;
   v8::HandleScope scope(CcTest::isolate());
   v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
@@ -3987,84 +3638,6 @@ TEST(Regress165495) {
   CompileRun("var g = mkClosure(); g('bozo');");
 }
 
-
-TEST(Regress169209) {
-  if (!i::FLAG_incremental_marking) return;
-  if (!i::FLAG_flush_code) return;
-  if (i::FLAG_turbo) return;  // No code flushing in Ignition + TurboFan.
-  i::FLAG_always_opt = false;
-  i::FLAG_stress_compaction = false;
-  i::FLAG_allow_natives_syntax = true;
-
-  CcTest::InitializeVM();
-  Isolate* isolate = CcTest::i_isolate();
-  Heap* heap = isolate->heap();
-  HandleScope scope(isolate);
-
-  // Perform one initial GC to enable code flushing.
-  CcTest::CollectAllGarbage();
-
-  // Prepare a shared function info eligible for code flushing for which
-  // the unoptimized code will be replaced during optimization.
-  Handle<SharedFunctionInfo> shared1;
-  {
-    HandleScope inner_scope(isolate);
-    LocalContext env;
-    CompileRun(
-        "function f() { return 'foobar'; }"
-        "function g(x) { if (x) f(); }"
-        "f();"
-        "g(false);");
-
-    Handle<JSFunction> f = Handle<JSFunction>::cast(
-        v8::Utils::OpenHandle(*v8::Local<v8::Function>::Cast(
-            CcTest::global()->Get(env.local(), v8_str("f")).ToLocalChecked())));
-    CHECK(f->is_compiled());
-    const int kAgingThreshold = 6;
-    for (int i = 0; i < kAgingThreshold; i++) {
-      f->shared()->code()->MakeOlder();
-    }
-
-    shared1 = inner_scope.CloseAndEscape(handle(f->shared(), isolate));
-  }
-
-  // Prepare a shared function info eligible for code flushing that will
-  // represent the dangling tail of the candidate list.
-  Handle<SharedFunctionInfo> shared2;
-  {
-    HandleScope inner_scope(isolate);
-    LocalContext env;
-    CompileRun(
-        "function flushMe() { return 0; }"
-        "flushMe(1);");
-
-    Handle<JSFunction> f = Handle<JSFunction>::cast(v8::Utils::OpenHandle(
-        *v8::Local<v8::Function>::Cast(CcTest::global()
-                                           ->Get(env.local(), v8_str("flushMe"))
-                                           .ToLocalChecked())));
-    CHECK(f->is_compiled());
-    const int kAgingThreshold = 6;
-    for (int i = 0; i < kAgingThreshold; i++) {
-      f->shared()->code()->MakeOlder();
-    }
-
-    shared2 = inner_scope.CloseAndEscape(handle(f->shared(), isolate));
-  }
-
-  // Simulate incremental marking and collect code flushing candidates.
-  heap::SimulateIncrementalMarking(heap);
-  CHECK(shared1->code()->gc_metadata() != NULL);
-
-  // Optimize function and make sure the unoptimized code is replaced.
-  CompileRun("%OptimizeFunctionOnNextCall(g);"
-             "g(false);");
-
-  // Finish garbage collection cycle.
-  CcTest::CollectAllGarbage();
-  CHECK(shared1->code()->gc_metadata() == NULL);
-}
-
-
 TEST(Regress169928) {
   i::FLAG_allow_natives_syntax = true;
   i::FLAG_opt = false;
@@ -4397,7 +3970,7 @@ TEST(EnsureAllocationSiteDependentCodesProcessed) {
   v8::internal::Heap* heap = CcTest::heap();
   GlobalHandles* global_handles = isolate->global_handles();
 
-  if (!isolate->use_crankshaft()) return;
+  if (!isolate->use_optimizer()) return;
 
   // The allocation site at the head of the list is ours.
   Handle<AllocationSite> site;
@@ -4467,7 +4040,7 @@ TEST(CellsInOptimizedCodeAreWeak) {
   Isolate* isolate = CcTest::i_isolate();
   v8::internal::Heap* heap = CcTest::heap();
 
-  if (!isolate->use_crankshaft()) return;
+  if (!isolate->use_optimizer()) return;
   HandleScope outer_scope(heap->isolate());
   Handle<Code> code;
   {
@@ -4511,7 +4084,7 @@ TEST(ObjectsInOptimizedCodeAreWeak) {
   Isolate* isolate = CcTest::i_isolate();
   v8::internal::Heap* heap = CcTest::heap();
 
-  if (!isolate->use_crankshaft()) return;
+  if (!isolate->use_optimizer()) return;
   HandleScope outer_scope(heap->isolate());
   Handle<Code> code;
   {
@@ -4552,7 +4125,7 @@ TEST(NewSpaceObjectsInOptimizedCode) {
   Isolate* isolate = CcTest::i_isolate();
   v8::internal::Heap* heap = CcTest::heap();
 
-  if (!isolate->use_crankshaft()) return;
+  if (!isolate->use_optimizer()) return;
   HandleScope outer_scope(heap->isolate());
   Handle<Code> code;
   {
@@ -4624,7 +4197,7 @@ TEST(NoWeakHashTableLeakWithIncrementalMarking) {
   i::Deoptimizer::DeoptimizeAll(isolate);
   CcTest::CollectAllGarbage();
 
-  if (!isolate->use_crankshaft()) return;
+  if (!isolate->use_optimizer()) return;
   HandleScope outer_scope(heap->isolate());
   for (int i = 0; i < 3; i++) {
     heap::SimulateIncrementalMarking(heap);
@@ -4692,7 +4265,7 @@ TEST(NextCodeLinkIsWeak) {
   Isolate* isolate = CcTest::i_isolate();
   v8::internal::Heap* heap = CcTest::heap();
 
-  if (!isolate->use_crankshaft()) return;
+  if (!isolate->use_optimizer()) return;
   HandleScope outer_scope(heap->isolate());
   Handle<Code> code;
   CcTest::CollectAllAvailableGarbage();
@@ -4738,7 +4311,7 @@ TEST(NextCodeLinkIsWeak2) {
   Isolate* isolate = CcTest::i_isolate();
   v8::internal::Heap* heap = CcTest::heap();
 
-  if (!isolate->use_crankshaft()) return;
+  if (!isolate->use_optimizer()) return;
   HandleScope outer_scope(heap->isolate());
   CcTest::CollectAllAvailableGarbage();
   Handle<Context> context(Context::cast(heap->native_contexts_list()), isolate);

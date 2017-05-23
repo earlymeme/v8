@@ -90,11 +90,12 @@ namespace internal {
   /* ES6 section 7.3.13 Construct (F, [argumentsList], [newTarget]) */         \
   ASM(Construct)                                                               \
   ASM(ConstructWithSpread)                                                     \
+  ASM(ConstructForwardVarargs)                                                 \
+  ASM(ConstructFunctionForwardVarargs)                                         \
   ASM(JSConstructStubApi)                                                      \
-  ASM(JSConstructStubGeneric)                                                  \
+  ASM(JSConstructStubGenericRestrictedReturn)                                  \
+  ASM(JSConstructStubGenericUnrestrictedReturn)                                \
   ASM(JSBuiltinsConstructStub)                                                 \
-  ASM(JSBuiltinsConstructStubForBase)                                          \
-  ASM(JSBuiltinsConstructStubForDerived)                                       \
   TFC(FastNewClosure, FastNewClosure, 1)                                       \
   TFC(FastNewFunctionContextEval, FastNewFunctionContext, 1)                   \
   TFC(FastNewFunctionContextFunction, FastNewFunctionContext, 1)               \
@@ -104,13 +105,7 @@ namespace internal {
   TFC(FastCloneRegExp, FastCloneRegExp, 1)                                     \
   TFC(FastCloneShallowArrayTrack, FastCloneShallowArray, 1)                    \
   TFC(FastCloneShallowArrayDontTrack, FastCloneShallowArray, 1)                \
-  TFC(FastCloneShallowObject0, FastCloneShallowObject, 1)                      \
-  TFC(FastCloneShallowObject1, FastCloneShallowObject, 1)                      \
-  TFC(FastCloneShallowObject2, FastCloneShallowObject, 1)                      \
-  TFC(FastCloneShallowObject3, FastCloneShallowObject, 1)                      \
-  TFC(FastCloneShallowObject4, FastCloneShallowObject, 1)                      \
-  TFC(FastCloneShallowObject5, FastCloneShallowObject, 1)                      \
-  TFC(FastCloneShallowObject6, FastCloneShallowObject, 1)                      \
+  TFC(FastCloneShallowObject, FastCloneShallowObject, 1)                       \
                                                                                \
   /* Apply and entries */                                                      \
   ASM(Apply)                                                                   \
@@ -252,16 +247,18 @@ namespace internal {
   /* ES6 #sec-array.isarray */                                                 \
   TFJ(ArrayIsArray, 1, kArg)                                                   \
   /* ES7 #sec-array.prototype.includes */                                      \
-  TFJ(ArrayIncludes, 2, kSearchElement, kFromIndex)                            \
+  TFJ(ArrayIncludes, SharedFunctionInfo::kDontAdaptArgumentsSentinel)          \
   /* ES6 #sec-array.prototype.indexof */                                       \
-  TFJ(ArrayIndexOf, 2, kSearchElement, kFromIndex)                             \
+  TFJ(ArrayIndexOf, SharedFunctionInfo::kDontAdaptArgumentsSentinel)           \
   /* ES6 #sec-array.prototype.pop */                                           \
   CPP(ArrayPop)                                                                \
+  TFJ(FastArrayPop, SharedFunctionInfo::kDontAdaptArgumentsSentinel)           \
   /* ES6 #sec-array.prototype.push */                                          \
   CPP(ArrayPush)                                                               \
   TFJ(FastArrayPush, SharedFunctionInfo::kDontAdaptArgumentsSentinel)          \
   /* ES6 #sec-array.prototype.shift */                                         \
   CPP(ArrayShift)                                                              \
+  TFJ(FastArrayShift, SharedFunctionInfo::kDontAdaptArgumentsSentinel)         \
   /* ES6 #sec-array.prototype.slice */                                         \
   CPP(ArraySlice)                                                              \
   /* ES6 #sec-array.prototype.splice */                                        \
@@ -493,6 +490,7 @@ namespace internal {
   TFS(CreateIterResultObject, kValue, kDone)                                   \
                                                                                \
   /* Generator and Async */                                                    \
+  TFS(CreateGeneratorObject, kClosure, kReceiver)                              \
   CPP(GeneratorFunctionConstructor)                                            \
   /* ES6 #sec-generator.prototype.next */                                      \
   TFJ(GeneratorPrototypeNext, 1, kValue)                                       \
@@ -681,7 +679,7 @@ namespace internal {
   CPP(ObjectIsExtensible)                                                      \
   CPP(ObjectIsFrozen)                                                          \
   CPP(ObjectIsSealed)                                                          \
-  CPP(ObjectKeys)                                                              \
+  TFJ(ObjectKeys, 1, kObject)                                                  \
   CPP(ObjectLookupGetter)                                                      \
   CPP(ObjectLookupSetter)                                                      \
   CPP(ObjectPreventExtensions)                                                 \
@@ -806,11 +804,11 @@ namespace internal {
                                                                                \
   TFS(RegExpReplace, kRegExp, kString, kReplaceValue)                          \
   /* ES #sec-regexp.prototype-@@replace */                                     \
-  TFJ(RegExpPrototypeReplace, 2, kString, kReplaceValue)                       \
+  TFJ(RegExpPrototypeReplace, SharedFunctionInfo::kDontAdaptArgumentsSentinel) \
                                                                                \
   TFS(RegExpSplit, kRegExp, kString, kLimit)                                   \
   /* ES #sec-regexp.prototype-@@split */                                       \
-  TFJ(RegExpPrototypeSplit, 2, kString, kLimit)                                \
+  TFJ(RegExpPrototypeSplit, SharedFunctionInfo::kDontAdaptArgumentsSentinel)   \
                                                                                \
   /* SharedArrayBuffer */                                                      \
   CPP(SharedArrayBufferPrototypeGetByteLength)                                 \
@@ -852,6 +850,8 @@ namespace internal {
   CPP(StringPrototypeLocaleCompare)                                            \
   /* ES6 #sec-string.prototype.replace */                                      \
   TFJ(StringPrototypeReplace, 2, kSearch, kReplace)                            \
+  /* ES6 #sec-string.prototype.slice */                                        \
+  TFJ(StringPrototypeSlice, SharedFunctionInfo::kDontAdaptArgumentsSentinel)   \
   /* ES6 #sec-string.prototype.split */                                        \
   TFJ(StringPrototypeSplit, 2, kSeparator, kLimit)                             \
   /* ES6 #sec-string.prototype.substr */                                       \
@@ -946,6 +946,11 @@ namespace internal {
   /* ES6 %TypedArray%.prototype.reduceRight */                                 \
   TFJ(TypedArrayPrototypeReduceRight,                                          \
       SharedFunctionInfo::kDontAdaptArgumentsSentinel)                         \
+  /* ES6 %TypedArray%.prototype.map */                                         \
+  TFJ(TypedArrayPrototypeMap, SharedFunctionInfo::kDontAdaptArgumentsSentinel) \
+  /* ES6 %TypedArray%.prototype.forEach */                                     \
+  TFJ(TypedArrayPrototypeForEach,                                              \
+      SharedFunctionInfo::kDontAdaptArgumentsSentinel)                         \
                                                                                \
   /* Wasm */                                                                   \
   ASM(WasmCompileLazy)                                                         \
@@ -1003,7 +1008,7 @@ namespace internal {
   BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG)  \
                                                              \
   /* ES #sec-string.prototype.tolowercase */                 \
-  CPP(StringPrototypeToLowerCaseIntl)                        \
+  TFJ(StringPrototypeToLowerCaseIntl, 0)                     \
   /* ES #sec-string.prototype.touppercase */                 \
   CPP(StringPrototypeToUpperCaseIntl)                        \
   /* ES #sec-string.prototype.normalize */                   \

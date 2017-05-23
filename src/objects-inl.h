@@ -523,24 +523,6 @@ bool HeapObject::IsNormalizedMapCache() const {
   return NormalizedMapCache::IsNormalizedMapCache(this);
 }
 
-int NormalizedMapCache::GetIndex(Handle<Map> map) {
-  return map->Hash() % NormalizedMapCache::kEntries;
-}
-
-bool NormalizedMapCache::IsNormalizedMapCache(const HeapObject* obj) {
-  if (!obj->IsFixedArray()) return false;
-  if (FixedArray::cast(obj)->length() != NormalizedMapCache::kEntries) {
-    return false;
-  }
-#ifdef VERIFY_HEAP
-  if (FLAG_verify_heap) {
-    reinterpret_cast<NormalizedMapCache*>(const_cast<HeapObject*>(obj))
-        ->NormalizedMapCacheVerify();
-  }
-#endif
-  return true;
-}
-
 bool HeapObject::IsCompilationCacheTable() const { return IsHashTable(); }
 
 bool HeapObject::IsCodeCacheHashTable() const { return IsHashTable(); }
@@ -679,7 +661,6 @@ CAST_ACCESSOR(JSWeakCollection)
 CAST_ACCESSOR(JSWeakMap)
 CAST_ACCESSOR(JSWeakSet)
 CAST_ACCESSOR(LayoutDescriptor)
-CAST_ACCESSOR(Map)
 CAST_ACCESSOR(ModuleInfo)
 CAST_ACCESSOR(Name)
 CAST_ACCESSOR(NameDictionary)
@@ -1303,8 +1284,15 @@ bool JSObject::PrototypeHasNoElements(Isolate* isolate, JSObject* object) {
   reinterpret_cast<Object*>(base::NoBarrier_Load( \
       reinterpret_cast<const base::AtomicWord*>(FIELD_ADDR_CONST(p, offset))))
 
+#ifdef V8_CONCURRENT_MARKING
+#define WRITE_FIELD(p, offset, value)                             \
+  base::NoBarrier_Store(                                          \
+      reinterpret_cast<base::AtomicWord*>(FIELD_ADDR(p, offset)), \
+      reinterpret_cast<base::AtomicWord>(value));
+#else
 #define WRITE_FIELD(p, offset, value) \
   (*reinterpret_cast<Object**>(FIELD_ADDR(p, offset)) = value)
+#endif
 
 #define RELEASE_WRITE_FIELD(p, offset, value)                     \
   base::Release_Store(                                            \
@@ -1478,21 +1466,22 @@ Isolate* HeapObject::GetIsolate() const {
   return GetHeap()->isolate();
 }
 
-
 Map* HeapObject::map() const {
   return map_word().ToMap();
 }
 
 
 void HeapObject::set_map(Map* value) {
+  if (value != nullptr) {
+#ifdef VERIFY_HEAP
+    value->GetHeap()->VerifyObjectLayoutChange(this, value);
+#endif
+  }
   set_map_word(MapWord::FromMap(value));
   if (value != nullptr) {
     // TODO(1600) We are passing NULL as a slot because maps can never be on
     // evacuation candidate.
     value->GetHeap()->incremental_marking()->RecordWrite(this, nullptr, value);
-#ifdef VERIFY_HEAP
-    value->GetHeap()->VerifyObjectLayoutChange(this, value);
-#endif
   }
 }
 
@@ -1503,28 +1492,43 @@ Map* HeapObject::synchronized_map() {
 
 
 void HeapObject::synchronized_set_map(Map* value) {
+  if (value != nullptr) {
+#ifdef VERIFY_HEAP
+    value->GetHeap()->VerifyObjectLayoutChange(this, value);
+#endif
+  }
   synchronized_set_map_word(MapWord::FromMap(value));
   if (value != nullptr) {
     // TODO(1600) We are passing NULL as a slot because maps can never be on
     // evacuation candidate.
     value->GetHeap()->incremental_marking()->RecordWrite(this, nullptr, value);
-#ifdef VERIFY_HEAP
-    value->GetHeap()->VerifyObjectLayoutChange(this, value);
-#endif
   }
-}
-
-
-void HeapObject::synchronized_set_map_no_write_barrier(Map* value) {
-  synchronized_set_map_word(MapWord::FromMap(value));
 }
 
 
 // Unsafe accessor omitting write barrier.
 void HeapObject::set_map_no_write_barrier(Map* value) {
+  if (value != nullptr) {
+#ifdef VERIFY_HEAP
+    value->GetHeap()->VerifyObjectLayoutChange(this, value);
+#endif
+  }
   set_map_word(MapWord::FromMap(value));
 }
 
+void HeapObject::set_map_after_allocation(Map* value, WriteBarrierMode mode) {
+  set_map_word(MapWord::FromMap(value));
+  if (mode != SKIP_WRITE_BARRIER) {
+    DCHECK(value != nullptr);
+    // TODO(1600) We are passing NULL as a slot because maps can never be on
+    // evacuation candidate.
+    value->GetHeap()->incremental_marking()->RecordWrite(this, nullptr, value);
+  }
+}
+
+HeapObject** HeapObject::map_slot() {
+  return reinterpret_cast<HeapObject**>(FIELD_ADDR(this, kMapOffset));
+}
 
 MapWord HeapObject::map_word() const {
   return MapWord(
@@ -1985,18 +1989,6 @@ InterceptorInfo* JSObject::GetNamedInterceptor() {
   return map()->GetNamedInterceptor();
 }
 
-InterceptorInfo* Map::GetNamedInterceptor() {
-  DCHECK(has_named_interceptor());
-  FunctionTemplateInfo* info = GetFunctionTemplateInfo();
-  return InterceptorInfo::cast(info->named_property_handler());
-}
-
-InterceptorInfo* Map::GetIndexedInterceptor() {
-  DCHECK(has_indexed_interceptor());
-  FunctionTemplateInfo* info = GetFunctionTemplateInfo();
-  return InterceptorInfo::cast(info->indexed_property_handler());
-}
-
 double Oddball::to_number_raw() const {
   return READ_DOUBLE_FIELD(this, kToNumberRawOffset);
 }
@@ -2162,7 +2154,6 @@ int JSObject::GetHeaderSize(InstanceType type) {
         return JSArrayIterator::kSize;
       }
       UNREACHABLE();
-      return 0;
   }
 }
 
@@ -3558,7 +3549,6 @@ uint16_t String::Get(int index) {
   }
 
   UNREACHABLE();
-  return 0;
 }
 
 
@@ -3643,7 +3633,6 @@ ConsString* String::VisitFlat(Visitor* visitor,
 
       default:
         UNREACHABLE();
-        return NULL;
     }
   }
 }
@@ -4117,7 +4106,6 @@ int FixedTypedArrayBase::ElementSize(InstanceType type) {
 #undef TYPED_ARRAY_CASE
     default:
       UNREACHABLE();
-      return 0;
   }
   return element_size;
 }
@@ -5911,7 +5899,7 @@ ACCESSORS(SharedFunctionInfo, construct_stub, Code, kConstructStubOffset)
 ACCESSORS(SharedFunctionInfo, feedback_metadata, FeedbackMetadata,
           kFeedbackMetadataOffset)
 SMI_ACCESSORS(SharedFunctionInfo, function_literal_id, kFunctionLiteralIdOffset)
-#if TRACE_MAPS
+#if V8_SFI_HAS_UNIQUE_ID
 SMI_ACCESSORS(SharedFunctionInfo, unique_id, kUniqueIdOffset)
 #endif
 ACCESSORS(SharedFunctionInfo, instance_class_name, Object,
@@ -6051,7 +6039,6 @@ BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, native, kNative)
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, force_inline, kForceInline)
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, must_use_ignition_turbo,
                kMustUseIgnitionTurbo)
-BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, dont_flush, kDontFlush)
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, is_asm_wasm_broken,
                kIsAsmWasmBroken)
 
@@ -6155,14 +6142,6 @@ void SharedFunctionInfo::set_code(Code* value, WriteBarrierMode mode) {
 
 
 void SharedFunctionInfo::ReplaceCode(Code* value) {
-  // If the GC metadata field is already used then the function was
-  // enqueued as a code flushing candidate and we remove it now.
-  if (code()->gc_metadata() != NULL) {
-    CodeFlusher* flusher = GetHeap()->mark_compact_collector()->code_flusher();
-    flusher->EvictCandidate(this);
-  }
-
-  DCHECK(code()->gc_metadata() == NULL && value->gc_metadata() == NULL);
 #ifdef DEBUG
   Code::VerifyRecompiledCode(code(), value);
 #endif  // DEBUG
@@ -6763,7 +6742,6 @@ void Code::WipeOutHeader() {
     WRITE_FIELD(this, kTypeFeedbackInfoOffset, NULL);
   }
   WRITE_FIELD(this, kNextCodeLinkOffset, NULL);
-  WRITE_FIELD(this, kGCMetadataOffset, NULL);
 }
 
 
@@ -6801,7 +6779,6 @@ void Code::set_stub_key(uint32_t key) {
 }
 
 
-ACCESSORS(Code, gc_metadata, Object, kGCMetadataOffset)
 INT_ACCESSORS(Code, ic_age, kICAgeOffset)
 
 
@@ -6912,6 +6889,31 @@ void JSArrayBuffer::set_backing_store(void* value, WriteBarrierMode mode) {
 
 ACCESSORS(JSArrayBuffer, byte_length, Object, kByteLengthOffset)
 
+void* JSArrayBuffer::allocation_base() const {
+  intptr_t ptr = READ_INTPTR_FIELD(this, kAllocationBaseOffset);
+  return reinterpret_cast<void*>(ptr);
+}
+
+void JSArrayBuffer::set_allocation_base(void* value, WriteBarrierMode mode) {
+  intptr_t ptr = reinterpret_cast<intptr_t>(value);
+  WRITE_INTPTR_FIELD(this, kAllocationBaseOffset, ptr);
+}
+
+size_t JSArrayBuffer::allocation_length() const {
+  return *reinterpret_cast<const size_t*>(
+      FIELD_ADDR_CONST(this, kAllocationLengthOffset));
+}
+
+void JSArrayBuffer::set_allocation_length(size_t value) {
+  (*reinterpret_cast<size_t*>(FIELD_ADDR(this, kAllocationLengthOffset))) =
+      value;
+}
+
+ArrayBuffer::Allocator::AllocationMode JSArrayBuffer::allocation_mode() const {
+  using AllocationMode = ArrayBuffer::Allocator::AllocationMode;
+  return has_guard_region() ? AllocationMode::kReservation
+                            : AllocationMode::kNormal;
+}
 
 void JSArrayBuffer::set_bit_field(uint32_t bits) {
   if (kInt32Size != kPointerSize) {
@@ -6934,7 +6936,6 @@ bool JSArrayBuffer::is_external() { return IsExternal::decode(bit_field()); }
 
 
 void JSArrayBuffer::set_is_external(bool value) {
-  DCHECK(!value || !has_guard_region());
   set_bit_field(IsExternal::update(bit_field(), value));
 }
 
@@ -6964,7 +6965,7 @@ void JSArrayBuffer::set_is_shared(bool value) {
   set_bit_field(IsShared::update(bit_field(), value));
 }
 
-bool JSArrayBuffer::has_guard_region() {
+bool JSArrayBuffer::has_guard_region() const {
   return HasGuardRegion::decode(bit_field());
 }
 
@@ -7098,7 +7099,6 @@ int JSRegExp::CaptureCount() {
       return Smi::cast(DataAt(kIrregexpCaptureCountIndex))->value();
     default:
       UNREACHABLE();
-      return -1;
   }
 }
 

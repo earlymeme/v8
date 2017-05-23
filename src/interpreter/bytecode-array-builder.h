@@ -28,6 +28,7 @@ namespace interpreter {
 class BytecodeLabel;
 class BytecodeNode;
 class BytecodeRegisterOptimizer;
+class BytecodeJumpTable;
 class Register;
 
 class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
@@ -351,14 +352,21 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
       TestTypeOfFlags::LiteralFlag literal_flag);
 
   // Converts accumulator and stores result in register |out|.
-  BytecodeArrayBuilder& ConvertAccumulatorToObject(Register out);
-  BytecodeArrayBuilder& ConvertAccumulatorToName(Register out);
-  BytecodeArrayBuilder& ConvertAccumulatorToNumber(Register out,
-                                                   int feedback_slot);
+  BytecodeArrayBuilder& ToObject(Register out);
+  BytecodeArrayBuilder& ToName(Register out);
+  BytecodeArrayBuilder& ToNumber(Register out, int feedback_slot);
+
+  // Converts accumulator to a primitive and then to a string, and stores result
+  // in register |out|.
+  BytecodeArrayBuilder& ToPrimitiveToString(Register out, int feedback_slot);
+  // Concatenate all the string values in |operand_registers| into a string
+  // and store result in the accumulator.
+  BytecodeArrayBuilder& StringConcat(RegisterList operand_registers);
 
   // Flow Control.
   BytecodeArrayBuilder& Bind(BytecodeLabel* label);
   BytecodeArrayBuilder& Bind(const BytecodeLabel& target, BytecodeLabel* label);
+  BytecodeArrayBuilder& Bind(BytecodeJumpTable* jump_table, int case_value);
 
   BytecodeArrayBuilder& Jump(BytecodeLabel* label);
   BytecodeArrayBuilder& JumpLoop(BytecodeLabel* label, int loop_depth);
@@ -375,6 +383,8 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
                                   NilValue nil);
   BytecodeArrayBuilder& JumpIfNotNil(BytecodeLabel* label, Token::Value op,
                                      NilValue nil);
+
+  BytecodeArrayBuilder& SwitchOnSmiNoFeedback(BytecodeJumpTable* jump_table);
 
   BytecodeArrayBuilder& StackCheck(int position);
 
@@ -412,6 +422,10 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   // Creates a new handler table entry and returns a {hander_id} identifying the
   // entry, so that it can be referenced by above exception handling support.
   int NewHandlerEntry() { return handler_table_builder()->NewHandlerEntry(); }
+
+  // Allocates a new jump table of given |size| and |case_value_base| in the
+  // constant pool.
+  BytecodeJumpTable* AllocateJumpTable(int size, int case_value_base);
 
   // Gets a constant pool entry.
   size_t GetConstantPoolEntry(const AstRawString* raw_string);
@@ -483,13 +497,17 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   // Returns the current source position for the given |bytecode|.
   INLINE(BytecodeSourceInfo CurrentSourcePosition(Bytecode bytecode));
 
-#define DECLARE_BYTECODE_OUTPUT(Name, ...)         \
-  template <typename... Operands>                  \
-  INLINE(void Output##Name(Operands... operands)); \
-  template <typename... Operands>                  \
+#define DECLARE_BYTECODE_OUTPUT(Name, ...)                       \
+  template <typename... Operands>                                \
+  INLINE(BytecodeNode Create##Name##Node(Operands... operands)); \
+  template <typename... Operands>                                \
+  INLINE(void Output##Name(Operands... operands));               \
+  template <typename... Operands>                                \
   INLINE(void Output##Name(BytecodeLabel* label, Operands... operands));
   BYTECODE_LIST(DECLARE_BYTECODE_OUTPUT)
 #undef DECLARE_OPERAND_TYPE_INFO
+
+  INLINE(void OutputSwitchOnSmiNoFeedback(BytecodeJumpTable* jump_table));
 
   bool RegisterIsValid(Register reg) const;
   bool RegisterListIsValid(RegisterList reg_list) const;
@@ -507,6 +525,7 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   // Write bytecode to bytecode array.
   void Write(BytecodeNode* node);
   void WriteJump(BytecodeNode* node, BytecodeLabel* label);
+  void WriteSwitch(BytecodeNode* node, BytecodeJumpTable* label);
 
   // Not implemented as the illegal bytecode is used inside internally
   // to indicate a bytecode field is not valid or an error has occured

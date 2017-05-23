@@ -91,6 +91,10 @@
 #endif  // Target architecture.
 #endif  // V8_INTERPRETED_REGEXP
 
+#ifdef V8_INTL_SUPPORT
+#include "src/intl.h"
+#endif  // V8_INTL_SUPPORT
+
 namespace v8 {
 namespace internal {
 
@@ -768,7 +772,6 @@ const char* RelocInfo::RelocModeName(RelocInfo::Mode rmode) {
     case NUMBER_OF_MODES:
     case PC_JUMP:
       UNREACHABLE();
-      return "number_of_modes";
   }
   return "unknown relocation type";
 }
@@ -891,7 +894,6 @@ static ExternalReference::Type BuiltinCallTypeForResultSize(int result_size) {
       return ExternalReference::BUILTIN_CALL_TRIPLE;
   }
   UNREACHABLE();
-  return ExternalReference::BUILTIN_CALL;
 }
 
 
@@ -1551,6 +1553,14 @@ ExternalReference ExternalReference::libc_memcpy_function(Isolate* isolate) {
   return ExternalReference(Redirect(isolate, FUNCTION_ADDR(libc_memcpy)));
 }
 
+void* libc_memmove(void* dest, const void* src, size_t n) {
+  return memmove(dest, src, n);
+}
+
+ExternalReference ExternalReference::libc_memmove_function(Isolate* isolate) {
+  return ExternalReference(Redirect(isolate, FUNCTION_ADDR(libc_memmove)));
+}
+
 void* libc_memset(void* dest, int byte, size_t n) {
   DCHECK_EQ(static_cast<char>(byte), byte);
   return memset(dest, byte, n);
@@ -1571,6 +1581,20 @@ ExternalReference ExternalReference::try_internalize_string_function(
   return ExternalReference(Redirect(
       isolate, FUNCTION_ADDR(StringTable::LookupStringIfExists_NoAllocate)));
 }
+
+#ifdef V8_INTL_SUPPORT
+ExternalReference ExternalReference::intl_convert_one_byte_to_lower(
+    Isolate* isolate) {
+  return ExternalReference(
+      Redirect(isolate, FUNCTION_ADDR(ConvertOneByteToLower)));
+}
+
+ExternalReference ExternalReference::intl_to_latin1_lower_table(
+    Isolate* isolate) {
+  uint8_t* ptr = const_cast<uint8_t*>(ToLatin1LowerTable());
+  return ExternalReference(reinterpret_cast<Address>(ptr));
+}
+#endif  // V8_INTL_SUPPORT
 
 // Explicit instantiations for all combinations of 1- and 2-byte strings.
 template ExternalReference

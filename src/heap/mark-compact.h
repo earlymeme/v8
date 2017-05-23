@@ -20,9 +20,9 @@ namespace v8 {
 namespace internal {
 
 // Forward declarations.
-class CodeFlusher;
 class EvacuationJobTraits;
 class HeapObjectVisitor;
+class LocalWorkStealingMarkingDeque;
 class MarkCompactCollector;
 class MinorMarkCompactCollector;
 class MarkingVisitor;
@@ -31,8 +31,10 @@ template <typename JobTraits>
 class PageParallelJob;
 class RecordMigratedSlotVisitor;
 class ThreadLocalTop;
+class WorkStealingMarkingDeque;
+class YoungGenerationMarkingVisitor;
 
-#if V8_CONCURRENT_MARKING
+#ifdef V8_CONCURRENT_MARKING
 using MarkingDeque = ConcurrentMarkingDeque;
 #else
 using MarkingDeque = SequentialMarkingDeque;
@@ -82,8 +84,6 @@ class ObjectMarking : public AllStatic {
   template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
   V8_INLINE static bool BlackToGrey(HeapObject* obj,
                                     const MarkingState& state) {
-    DCHECK(
-        (access_mode == MarkBit::ATOMIC || IsBlack<access_mode>(obj, state)));
     MarkBit markbit = MarkBitFrom(obj, state);
     if (!Marking::BlackToGrey<access_mode>(markbit)) return false;
     state.IncrementLiveBytes<access_mode>(-obj->Size());
@@ -93,24 +93,19 @@ class ObjectMarking : public AllStatic {
   template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
   V8_INLINE static bool WhiteToGrey(HeapObject* obj,
                                     const MarkingState& state) {
-    DCHECK(
-        (access_mode == MarkBit::ATOMIC || IsWhite<access_mode>(obj, state)));
     return Marking::WhiteToGrey<access_mode>(MarkBitFrom(obj, state));
   }
 
   template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
   V8_INLINE static bool WhiteToBlack(HeapObject* obj,
                                      const MarkingState& state) {
-    DCHECK(
-        (access_mode == MarkBit::ATOMIC || IsWhite<access_mode>(obj, state)));
-    if (!ObjectMarking::WhiteToGrey<access_mode>(obj, state)) return false;
-    return ObjectMarking::GreyToBlack<access_mode>(obj, state);
+    return ObjectMarking::WhiteToGrey<access_mode>(obj, state) &&
+           ObjectMarking::GreyToBlack<access_mode>(obj, state);
   }
 
   template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
   V8_INLINE static bool GreyToBlack(HeapObject* obj,
                                     const MarkingState& state) {
-    DCHECK((access_mode == MarkBit::ATOMIC || IsGrey<access_mode>(obj, state)));
     MarkBit markbit = MarkBitFrom(obj, state);
     if (!Marking::GreyToBlack<access_mode>(markbit)) return false;
     state.IncrementLiveBytes<access_mode>(obj->Size());
@@ -119,62 +114,6 @@ class ObjectMarking : public AllStatic {
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(ObjectMarking);
-};
-
-// CodeFlusher collects candidates for code flushing during marking and
-// processes those candidates after marking has completed in order to
-// reset those functions referencing code objects that would otherwise
-// be unreachable. Code objects can be referenced in two ways:
-//    - SharedFunctionInfo references unoptimized code.
-//    - JSFunction references either unoptimized or optimized code.
-// We are not allowed to flush unoptimized code for functions that got
-// optimized or inlined into optimized code, because we might bailout
-// into the unoptimized code again during deoptimization.
-class CodeFlusher {
- public:
-  explicit CodeFlusher(Isolate* isolate)
-      : isolate_(isolate),
-        jsfunction_candidates_head_(nullptr),
-        shared_function_info_candidates_head_(nullptr) {}
-
-  inline void AddCandidate(SharedFunctionInfo* shared_info);
-  inline void AddCandidate(JSFunction* function);
-
-  void EvictCandidate(SharedFunctionInfo* shared_info);
-  void EvictCandidate(JSFunction* function);
-
-  void ProcessCandidates() {
-    ProcessSharedFunctionInfoCandidates();
-    ProcessJSFunctionCandidates();
-  }
-
-  inline void VisitListHeads(RootVisitor* v);
-
-  template <typename StaticVisitor>
-  inline void IteratePointersToFromSpace();
-
- private:
-  void ProcessJSFunctionCandidates();
-  void ProcessSharedFunctionInfoCandidates();
-
-  static inline JSFunction** GetNextCandidateSlot(JSFunction* candidate);
-  static inline JSFunction* GetNextCandidate(JSFunction* candidate);
-  static inline void SetNextCandidate(JSFunction* candidate,
-                                      JSFunction* next_candidate);
-  static inline void ClearNextCandidate(JSFunction* candidate,
-                                        Object* undefined);
-
-  static inline SharedFunctionInfo* GetNextCandidate(
-      SharedFunctionInfo* candidate);
-  static inline void SetNextCandidate(SharedFunctionInfo* candidate,
-                                      SharedFunctionInfo* next_candidate);
-  static inline void ClearNextCandidate(SharedFunctionInfo* candidate);
-
-  Isolate* isolate_;
-  JSFunction* jsfunction_candidates_head_;
-  SharedFunctionInfo* shared_function_info_candidates_head_;
-
-  DISALLOW_COPY_AND_ASSIGN(CodeFlusher);
 };
 
 class MarkBitCellIterator BASE_EMBEDDED {
@@ -284,6 +223,8 @@ class LiveObjectVisitor BASE_EMBEDDED {
 };
 
 enum PageEvacuationMode { NEW_TO_NEW, NEW_TO_OLD };
+enum FreeSpaceTreatmentMode { IGNORE_FREE_SPACE, ZAP_FREE_SPACE };
+enum MarkingTreatmentMode { KEEP, CLEAR };
 
 // Base class for minor and full MC collectors.
 class MarkCompactCollectorBase {
@@ -326,8 +267,17 @@ class MarkCompactCollectorBase {
   void CreateAndExecuteEvacuationTasks(
       Collector* collector, PageParallelJob<EvacuationJobTraits>* job,
       RecordMigratedSlotVisitor* record_visitor,
-      MigrationObserver* migration_observer, const intptr_t live_bytes,
-      const int& abandoned_pages);
+      MigrationObserver* migration_observer, const intptr_t live_bytes);
+
+  // Returns whether this page should be moved according to heuristics.
+  bool ShouldMovePage(Page* p, intptr_t live_bytes);
+
+  template <RememberedSetType type>
+  void UpdatePointersInParallel(Heap* heap, base::Semaphore* semaphore,
+                                const MarkCompactCollectorBase* collector);
+
+  int NumberOfParallelCompactionTasks(int pages);
+  int NumberOfPointerUpdateTasks(int pages);
 
   Heap* heap_;
 };
@@ -335,10 +285,8 @@ class MarkCompactCollectorBase {
 // Collector for young-generation only.
 class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
  public:
-  explicit MinorMarkCompactCollector(Heap* heap)
-      : MarkCompactCollectorBase(heap),
-        marking_deque_(heap),
-        page_parallel_job_semaphore_(0) {}
+  explicit MinorMarkCompactCollector(Heap* heap);
+  ~MinorMarkCompactCollector();
 
   MarkingState marking_state(HeapObject* object) const override {
     return MarkingState::External(object);
@@ -352,16 +300,27 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
   void TearDown() override;
   void CollectGarbage() override;
 
+  void MakeIterable(Page* page, MarkingTreatmentMode marking_mode,
+                    FreeSpaceTreatmentMode free_space_mode);
+  void CleanupSweepToIteratePages();
+
  private:
+  class RootMarkingVisitorSeedOnly;
   class RootMarkingVisitor;
 
-  inline MarkingDeque* marking_deque() { return &marking_deque_; }
+  static const int kNumMarkers = 4;
+  static const int kMainMarker = 0;
 
-  V8_INLINE void MarkObject(HeapObject* obj);
-  V8_INLINE void PushBlack(HeapObject* obj);
+  inline WorkStealingMarkingDeque* marking_deque() { return marking_deque_; }
+
+  inline YoungGenerationMarkingVisitor* marking_visitor(int index) {
+    DCHECK_LT(index, kNumMarkers);
+    return marking_visitor_[index];
+  }
 
   SlotCallbackResult CheckAndMarkObject(Heap* heap, Address slot_address);
   void MarkLiveObjects() override;
+  void MarkRootSetInParallel();
   void ProcessMarkingDeque() override;
   void EmptyMarkingDeque() override;
   void ClearNonLiveReferences() override;
@@ -372,11 +331,17 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
   void EvacuatePagesInParallel() override;
   void UpdatePointersAfterEvacuation() override;
 
-  MarkingDeque marking_deque_;
+  int NumberOfMarkingTasks();
+
+  WorkStealingMarkingDeque* marking_deque_;
+  YoungGenerationMarkingVisitor* marking_visitor_[kNumMarkers];
   base::Semaphore page_parallel_job_semaphore_;
   List<Page*> new_space_evacuation_pages_;
+  std::vector<Page*> sweep_to_iterate_pages_;
 
-  friend class StaticYoungGenerationMarkingVisitor;
+  friend class MarkYoungGenerationJobTraits;
+  friend class YoungGenerationMarkingTask;
+  friend class YoungGenerationMarkingVisitor;
 };
 
 // Collector for young and old generation.
@@ -389,7 +354,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
     class SweeperTask;
 
     enum FreeListRebuildingMode { REBUILD_FREE_LIST, IGNORE_FREE_LIST };
-    enum FreeSpaceTreatmentMode { IGNORE_FREE_SPACE, ZAP_FREE_SPACE };
     enum ClearOldToNewSlotsMode {
       DO_NOT_CLEAR,
       CLEAR_REGULAR_SLOTS,
@@ -492,9 +456,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   void AbortCompaction();
 
-  CodeFlusher* code_flusher() { return code_flusher_; }
-  inline bool is_code_flushing_enabled() const { return code_flusher_ != NULL; }
-
   INLINE(static bool ShouldSkipEvacuationSlotRecording(Object* host)) {
     return Page::FromAddress(reinterpret_cast<Address>(host))
         ->ShouldSkipEvacuationSlotRecording();
@@ -574,12 +535,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   // Finishes GC, performs heap verification if enabled.
   void Finish();
-
-  // Mark code objects that are active on the stack to prevent them
-  // from being flushed.
-  void PrepareThreadForCodeFlushing(Isolate* isolate, ThreadLocalTop* top);
-
-  void PrepareForCodeFlushing();
 
   void MarkLiveObjects() override;
 
@@ -689,6 +644,7 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   void UpdatePointersAfterEvacuation() override;
 
   void ReleaseEvacuationCandidates();
+  void PostProcessEvacuationCandidates();
 
   base::Semaphore page_parallel_job_semaphore_;
 
@@ -721,8 +677,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   MarkingDeque marking_deque_;
 
-  CodeFlusher* code_flusher_;
-
   // Candidates for pages that should be evacuated.
   List<Page*> evacuation_candidates_;
   // Pages that are actually processed during evacuation.
@@ -738,7 +692,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   friend class MarkingVisitor;
   friend class RecordMigratedSlotVisitor;
   friend class SharedFunctionInfoMarkingVisitor;
-  friend class StaticYoungGenerationMarkingVisitor;
   friend class StoreBuffer;
 };
 

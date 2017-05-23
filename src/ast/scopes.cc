@@ -644,7 +644,7 @@ void DeclarationScope::Analyze(ParseInfo* info, Isolate* isolate,
   }
 
   if (scope->is_eval_scope() && is_sloppy(scope->language_mode())) {
-    AstNodeFactory factory(info->ast_value_factory());
+    AstNodeFactory factory(info->ast_value_factory(), info->zone());
     scope->HoistSloppyBlockFunctions(&factory);
   }
 
@@ -1332,7 +1332,7 @@ Declaration* Scope::CheckLexDeclarationsConflictingWith(
 void DeclarationScope::AllocateVariables(ParseInfo* info, Isolate* isolate,
                                          AnalyzeMode mode) {
   // Module variables must be allocated before variable resolution
-  // to ensure that AccessNeedsHoleCheck() can detect import variables.
+  // to ensure that UpdateNeedsHoleCheck() can detect import variables.
   if (is_module_scope()) AsModuleScope()->AllocateModuleVariables();
 
   ResolveVariablesRecursively(info);
@@ -1371,9 +1371,10 @@ bool Scope::AllowsLazyParsingWithoutUnresolvedVariables(
     if (s->is_catch_scope()) continue;
     // With scopes do not introduce variables that need allocation.
     if (s->is_with_scope()) continue;
-    // If everything is guaranteed to be context allocated we can ignore the
-    // scope.
-    if (s->has_forced_context_allocation()) continue;
+    // Module scopes context-allocate all variables, and have no
+    // {this} or {arguments} variables whose existence depends on
+    // references to them.
+    if (s->is_module_scope()) continue;
     // Only block scopes and function scopes should disallow preparsing.
     DCHECK(s->is_block_scope() || s->is_function_scope());
     return false;
@@ -1591,7 +1592,6 @@ const char* Header(ScopeType scope_type, FunctionKind function_kind,
     case WITH_SCOPE: return "with";
   }
   UNREACHABLE();
-  return NULL;
 }
 
 void Indent(int n, const char* str) { PrintF("%*s%s", n, "", str); }
@@ -1640,6 +1640,12 @@ void PrintVar(int indent, Variable* var) {
   if (var->maybe_assigned() == kNotAssigned) {
     if (comma) PrintF(", ");
     PrintF("never assigned");
+    comma = true;
+  }
+  if (var->initialization_flag() == kNeedsInitialization &&
+      !var->binding_needs_init()) {
+    if (comma) PrintF(", ");
+    PrintF("hole initialization elided");
   }
   PrintF("\n");
 }
@@ -1913,25 +1919,28 @@ void Scope::ResolveVariable(ParseInfo* info, VariableProxy* proxy) {
 
 namespace {
 
-bool AccessNeedsHoleCheck(Variable* var, VariableProxy* proxy, Scope* scope) {
+void SetNeedsHoleCheck(Variable* var, VariableProxy* proxy) {
+  proxy->set_needs_hole_check();
+  var->ForceHoleInitialization();
+}
+
+void UpdateNeedsHoleCheck(Variable* var, VariableProxy* proxy, Scope* scope) {
   if (var->mode() == DYNAMIC_LOCAL) {
     // Dynamically introduced variables never need a hole check (since they're
     // VAR bindings, either from var or function declarations), but the variable
     // they shadow might need a hole check, which we want to do if we decide
     // that no shadowing variable was dynamically introoduced.
-    DCHECK(!var->binding_needs_init());
-    return AccessNeedsHoleCheck(var->local_if_not_shadowed(), proxy, scope);
+    DCHECK_EQ(kCreatedInitialized, var->initialization_flag());
+    return UpdateNeedsHoleCheck(var->local_if_not_shadowed(), proxy, scope);
   }
 
-  if (!var->binding_needs_init()) {
-    return false;
-  }
+  if (var->initialization_flag() == kCreatedInitialized) return;
 
   // It's impossible to eliminate module import hole checks here, because it's
   // unknown at compilation time whether the binding referred to in the
   // exporting module itself requires hole checks.
   if (var->location() == VariableLocation::MODULE && !var->IsExport()) {
-    return true;
+    return SetNeedsHoleCheck(var, proxy);
   }
 
   // Check if the binding really needs an initialization check. The check
@@ -1942,7 +1951,7 @@ bool AccessNeedsHoleCheck(Variable* var, VariableProxy* proxy, Scope* scope) {
   // the source physically located after the initializer of the variable,
   // and that the initializer cannot be skipped due to a nonlinear scope.
   //
-  // The condition on the declaration scopes is a conservative check for
+  // The condition on the closure scopes is a conservative check for
   // nested functions that access a binding and are called before the
   // binding is initialized:
   //   function() { f(); let x = 1; function f() { x = 2; } }
@@ -1952,22 +1961,24 @@ bool AccessNeedsHoleCheck(Variable* var, VariableProxy* proxy, Scope* scope) {
   //   switch (1) { case 0: let x = 2; case 1: f(x); }
   // The scope of the variable needs to be checked, in case the use is
   // in a sub-block which may be linear.
-  if (var->scope()->GetDeclarationScope() != scope->GetDeclarationScope()) {
-    return true;
+  if (var->scope()->GetClosureScope() != scope->GetClosureScope()) {
+    return SetNeedsHoleCheck(var, proxy);
   }
 
   if (var->is_this()) {
-    DCHECK(IsDerivedConstructor(scope->GetDeclarationScope()->function_kind()));
+    DCHECK(IsDerivedConstructor(scope->GetClosureScope()->function_kind()));
     // TODO(littledan): implement 'this' hole check elimination.
-    return true;
+    return SetNeedsHoleCheck(var, proxy);
   }
 
   // We should always have valid source positions.
   DCHECK(var->initializer_position() != kNoSourcePosition);
   DCHECK(proxy->position() != kNoSourcePosition);
 
-  return var->scope()->is_nonlinear() ||
-         var->initializer_position() >= proxy->position();
+  if (var->scope()->is_nonlinear() ||
+      var->initializer_position() >= proxy->position()) {
+    return SetNeedsHoleCheck(var, proxy);
+  }
 }
 
 }  // anonymous namespace
@@ -1995,7 +2006,7 @@ void Scope::ResolveTo(ParseInfo* info, VariableProxy* proxy, Variable* var) {
 #endif
 
   DCHECK_NOT_NULL(var);
-  if (AccessNeedsHoleCheck(var, proxy, this)) proxy->set_needs_hole_check();
+  UpdateNeedsHoleCheck(var, proxy, this);
   proxy->BindTo(var);
 }
 
@@ -2034,7 +2045,7 @@ VariableProxy* Scope::FetchFreeVariables(DeclarationScope* max_outer_scope,
                                          ParseInfo* info,
                                          VariableProxy* stack) {
   // Module variables must be allocated before variable resolution
-  // to ensure that AccessNeedsHoleCheck() can detect import variables.
+  // to ensure that UpdateNeedsHoleCheck() can detect import variables.
   if (info != nullptr && is_module_scope()) {
     AsModuleScope()->AllocateModuleVariables();
   }

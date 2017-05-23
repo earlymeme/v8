@@ -108,6 +108,18 @@ class BytecodeGraphBuilder::Environment : public ZoneObject {
   int accumulator_base_;
 };
 
+// A helper for creating a temporary sub-environment for simple branches.
+struct BytecodeGraphBuilder::SubEnvironment final {
+ public:
+  explicit SubEnvironment(BytecodeGraphBuilder* builder)
+      : builder_(builder), parent_(builder->environment()->Copy()) {}
+
+  ~SubEnvironment() { builder_->set_environment(parent_); }
+
+ private:
+  BytecodeGraphBuilder* builder_;
+  BytecodeGraphBuilder::Environment* parent_;
+};
 
 // Issues:
 // - Scopes - intimately tied to AST. Need to eval what is needed.
@@ -870,9 +882,10 @@ BytecodeGraphBuilder::Environment* BytecodeGraphBuilder::CheckContextExtensions(
                 jsgraph()->TheHoleConstant());
 
     NewBranch(check_no_extension);
-    Environment* true_environment = environment()->Copy();
 
     {
+      SubEnvironment sub_environment(this);
+
       NewIfFalse();
       // If there is an extension, merge into the slow path.
       if (slow_environment == nullptr) {
@@ -883,12 +896,9 @@ BytecodeGraphBuilder::Environment* BytecodeGraphBuilder::CheckContextExtensions(
       }
     }
 
-    {
-      set_environment(true_environment);
-      NewIfTrue();
-      // Do nothing on if there is no extension, eventually falling through to
-      // the fast path.
-    }
+    NewIfTrue();
+    // Do nothing on if there is no extension, eventually falling through to
+    // the fast path.
   }
 
   // The depth can be zero, in which case no slow-path checks are built, and the
@@ -2081,6 +2091,14 @@ void BytecodeGraphBuilder::VisitToNumber() {
                               Environment::kAttachFrameState);
 }
 
+void BytecodeGraphBuilder::VisitToPrimitiveToString() {
+  UNREACHABLE();  // TODO(rmcilroy): Implement this.
+}
+
+void BytecodeGraphBuilder::VisitStringConcat() {
+  UNREACHABLE();  // TODO(rmcilroy): Implement this.
+}
+
 void BytecodeGraphBuilder::VisitJump() { BuildJump(); }
 
 void BytecodeGraphBuilder::VisitJumpConstant() { BuildJump(); }
@@ -2154,6 +2172,27 @@ void BytecodeGraphBuilder::VisitJumpIfNotUndefinedConstant() {
 }
 
 void BytecodeGraphBuilder::VisitJumpLoop() { BuildJump(); }
+
+void BytecodeGraphBuilder::BuildSwitchOnSmi(Node* condition) {
+  interpreter::JumpTableTargetOffsets offsets =
+      bytecode_iterator().GetJumpTableTargetOffsets();
+
+  NewSwitch(condition, offsets.size() + 1);
+  for (const auto& entry : offsets) {
+    SubEnvironment sub_environment(this);
+    NewIfValue(entry.case_value);
+    MergeIntoSuccessorEnvironment(entry.target_offset);
+  }
+  NewIfDefault();
+}
+
+void BytecodeGraphBuilder::VisitSwitchOnSmiNoFeedback() {
+  PrepareEagerCheckpoint();
+
+  Node* acc = environment()->LookupAccumulator();
+  Node* acc_smi = NewNode(simplified()->CheckSmi(), acc);
+  BuildSwitchOnSmi(acc_smi);
+}
 
 void BytecodeGraphBuilder::VisitStackCheck() {
   PrepareEagerCheckpoint();
@@ -2265,8 +2304,6 @@ void BytecodeGraphBuilder::VisitSuspendGenerator() {
 }
 
 void BytecodeGraphBuilder::VisitResumeGenerator() {
-  PrepareEagerCheckpoint();
-
   Node* generator = environment()->LookupRegister(
       bytecode_iterator().GetRegisterOperand(0));
 
@@ -2280,7 +2317,7 @@ void BytecodeGraphBuilder::VisitResumeGenerator() {
   Node* state =
       NewNode(javascript()->GeneratorRestoreContinuation(), generator);
 
-  environment()->BindAccumulator(state, Environment::kAttachFrameState);
+  environment()->BindAccumulator(state);
 }
 
 void BytecodeGraphBuilder::VisitWide() {
@@ -2400,19 +2437,21 @@ void BytecodeGraphBuilder::BuildJump() {
 
 void BytecodeGraphBuilder::BuildJumpIf(Node* condition) {
   NewBranch(condition);
-  Environment* if_false_environment = environment()->Copy();
-  NewIfTrue();
-  MergeIntoSuccessorEnvironment(bytecode_iterator().GetJumpTargetOffset());
-  set_environment(if_false_environment);
+  {
+    SubEnvironment sub_environment(this);
+    NewIfTrue();
+    MergeIntoSuccessorEnvironment(bytecode_iterator().GetJumpTargetOffset());
+  }
   NewIfFalse();
 }
 
 void BytecodeGraphBuilder::BuildJumpIfNot(Node* condition) {
   NewBranch(condition);
-  Environment* if_true_environment = environment()->Copy();
-  NewIfFalse();
-  MergeIntoSuccessorEnvironment(bytecode_iterator().GetJumpTargetOffset());
-  set_environment(if_true_environment);
+  {
+    SubEnvironment sub_environment(this);
+    NewIfFalse();
+    MergeIntoSuccessorEnvironment(bytecode_iterator().GetJumpTargetOffset());
+  }
   NewIfTrue();
 }
 
@@ -2432,24 +2471,26 @@ void BytecodeGraphBuilder::BuildJumpIfNotEqual(Node* comperand) {
 
 void BytecodeGraphBuilder::BuildJumpIfFalse() {
   NewBranch(environment()->LookupAccumulator());
-  Environment* if_true_environment = environment()->Copy();
-  environment()->BindAccumulator(jsgraph()->FalseConstant());
-  NewIfFalse();
-  MergeIntoSuccessorEnvironment(bytecode_iterator().GetJumpTargetOffset());
-  if_true_environment->BindAccumulator(jsgraph()->TrueConstant());
-  set_environment(if_true_environment);
+  {
+    SubEnvironment sub_environment(this);
+    NewIfFalse();
+    environment()->BindAccumulator(jsgraph()->FalseConstant());
+    MergeIntoSuccessorEnvironment(bytecode_iterator().GetJumpTargetOffset());
+  }
   NewIfTrue();
+  environment()->BindAccumulator(jsgraph()->TrueConstant());
 }
 
 void BytecodeGraphBuilder::BuildJumpIfTrue() {
   NewBranch(environment()->LookupAccumulator());
-  Environment* if_false_environment = environment()->Copy();
-  environment()->BindAccumulator(jsgraph()->TrueConstant());
-  NewIfTrue();
-  MergeIntoSuccessorEnvironment(bytecode_iterator().GetJumpTargetOffset());
-  if_false_environment->BindAccumulator(jsgraph()->FalseConstant());
-  set_environment(if_false_environment);
+  {
+    SubEnvironment sub_environment(this);
+    NewIfTrue();
+    environment()->BindAccumulator(jsgraph()->TrueConstant());
+    MergeIntoSuccessorEnvironment(bytecode_iterator().GetJumpTargetOffset());
+  }
   NewIfFalse();
+  environment()->BindAccumulator(jsgraph()->FalseConstant());
 }
 
 void BytecodeGraphBuilder::BuildJumpIfToBooleanTrue() {

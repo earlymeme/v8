@@ -698,7 +698,6 @@ class SideTable : public ZoneObject {
       uint32_t target_stack_height;
       // Arity when branching to this label.
       const uint32_t arity;
-      // TODO(clemensh): Fix ZoneAllocator and make this ZoneVector<const Ref>.
       ZoneVector<Ref> refs;
 
       static CLabel* New(Zone* zone, uint32_t stack_height, uint32_t arity) {
@@ -1105,7 +1104,6 @@ Handle<Object> WasmValToNumber(Factory* factory, WasmVal val,
     case kWasmI64:
       // wasm->js and js->wasm is illegal for i64 type.
       UNREACHABLE();
-      return Handle<Object>::null();
     case kWasmF32:
       return factory->NewNumber(val.to<float>());
     case kWasmF64:
@@ -1420,7 +1418,6 @@ class ThreadImpl {
       }
       default:
         UNREACHABLE();
-        return 0;
     }
   }
 

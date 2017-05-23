@@ -11,7 +11,7 @@ snippet: "
 "
 frame size: 15
 parameter count: 1
-bytecode array length: 262
+bytecode array length: 260
 bytecodes: [
   /*   30 E> */ B(StackCheck),
                 B(LdaZero),
@@ -118,8 +118,7 @@ bytecodes: [
                 B(SetPendingMessage),
                 B(LdaZero),
                 B(TestEqualStrictNoFeedback), R(9),
-                B(JumpIfTrue), U8(4),
-                B(Jump), U8(5),
+                B(JumpIfFalse), U8(5),
                 B(Ldar), R(10),
                 B(ReThrow),
                 B(LdaUndefined),
@@ -150,7 +149,7 @@ snippet: "
 "
 frame size: 16
 parameter count: 1
-bytecode array length: 275
+bytecode array length: 270
 bytecodes: [
   /*   30 E> */ B(StackCheck),
   /*   42 S> */ B(LdaConstant), U8(0),
@@ -257,12 +256,8 @@ bytecodes: [
                 B(CallRuntime), U16(Runtime::kThrowIteratorResultNotAnObject), R(8), U8(1),
                 B(Ldar), R(12),
                 B(SetPendingMessage),
-                B(LdaZero),
-                B(TestEqualStrictNoFeedback), R(10),
-                B(JumpIfTrue), U8(10),
-                B(LdaSmi), I8(1),
-                B(TestEqualStrictNoFeedback), R(10),
-                B(JumpIfTrue), U8(7),
+                B(Ldar), R(10),
+                B(SwitchOnSmiNoFeedback), U8(10), U8(2), I8(0),
                 B(Jump), U8(8),
                 B(Ldar), R(11),
   /*   85 S> */ B(Return),
@@ -282,6 +277,8 @@ constant pool: [
   ONE_BYTE_INTERNALIZED_STRING_TYPE ["return"],
   ONE_BYTE_INTERNALIZED_STRING_TYPE [""],
   FIXED_ARRAY_TYPE,
+  Smi [6],
+  Smi [9],
 ]
 handlers: [
   [11, 127, 133],
@@ -298,7 +295,7 @@ snippet: "
 "
 frame size: 15
 parameter count: 1
-bytecode array length: 280
+bytecode array length: 278
 bytecodes: [
   /*   30 E> */ B(StackCheck),
                 B(LdaZero),
@@ -413,8 +410,7 @@ bytecodes: [
                 B(SetPendingMessage),
                 B(LdaZero),
                 B(TestEqualStrictNoFeedback), R(9),
-                B(JumpIfTrue), U8(4),
-                B(Jump), U8(5),
+                B(JumpIfFalse), U8(5),
                 B(Ldar), R(10),
                 B(ReThrow),
                 B(LdaUndefined),
@@ -445,7 +441,7 @@ snippet: "
 "
 frame size: 14
 parameter count: 1
-bytecode array length: 286
+bytecode array length: 281
 bytecodes: [
   /*   30 E> */ B(StackCheck),
   /*   42 S> */ B(CreateObjectLiteral), U8(0), U8(3), U8(1), R(8),
@@ -555,12 +551,8 @@ bytecodes: [
                 B(CallRuntime), U16(Runtime::kThrowIteratorResultNotAnObject), R(6), U8(1),
                 B(Ldar), R(10),
                 B(SetPendingMessage),
-                B(LdaZero),
-                B(TestEqualStrictNoFeedback), R(8),
-                B(JumpIfTrue), U8(10),
-                B(LdaSmi), I8(1),
-                B(TestEqualStrictNoFeedback), R(8),
-                B(JumpIfTrue), U8(7),
+                B(Ldar), R(8),
+                B(SwitchOnSmiNoFeedback), U8(12), U8(2), I8(0),
                 B(Jump), U8(8),
                 B(Ldar), R(9),
   /*  105 S> */ B(Return),
@@ -582,6 +574,8 @@ constant pool: [
   ONE_BYTE_INTERNALIZED_STRING_TYPE ["return"],
   ONE_BYTE_INTERNALIZED_STRING_TYPE [""],
   FIXED_ARRAY_TYPE,
+  Smi [6],
+  Smi [9],
 ]
 handlers: [
   [15, 138, 144],

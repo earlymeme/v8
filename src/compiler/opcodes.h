@@ -146,6 +146,7 @@
   V(JSStoreDataPropertyInLiteral) \
   V(JSDeleteProperty)             \
   V(JSHasProperty)                \
+  V(JSCreateGeneratorObject)      \
   V(JSGetSuperConstructor)
 
 #define JS_CONTEXT_OP_LIST(V) \
@@ -158,6 +159,7 @@
   V(JSCreateScriptContext)
 
 #define JS_OTHER_OP_LIST(V)         \
+  V(JSConstructForwardVarargs)      \
   V(JSConstruct)                    \
   V(JSConstructWithSpread)          \
   V(JSCallForwardVarargs)           \
@@ -319,6 +321,7 @@
   V(CheckInternalizedString)        \
   V(CheckReceiver)                  \
   V(CheckString)                    \
+  V(CheckSymbol)                    \
   V(CheckSmi)                       \
   V(CheckHeapObject)                \
   V(CheckFloat64Hole)               \

@@ -330,7 +330,6 @@ Callable CodeFactory::StringCompare(Isolate* isolate, Token::Value token) {
       break;
   }
   UNREACHABLE();
-  return StringEqual(isolate);
 }
 
 // static
@@ -371,8 +370,8 @@ Callable CodeFactory::FastCloneShallowArray(
 }
 
 // static
-Callable CodeFactory::FastCloneShallowObject(Isolate* isolate, int length) {
-  return Callable(isolate->builtins()->NewCloneShallowObject(length),
+Callable CodeFactory::FastCloneShallowObject(Isolate* isolate) {
+  return Callable(isolate->builtins()->FastCloneShallowObject(),
                   FastCloneShallowObjectDescriptor(isolate));
 }
 
@@ -458,6 +457,18 @@ Callable CodeFactory::ConstructFunction(Isolate* isolate) {
 }
 
 // static
+Callable CodeFactory::ConstructForwardVarargs(Isolate* isolate) {
+  return Callable(isolate->builtins()->ConstructForwardVarargs(),
+                  ConstructForwardVarargsDescriptor(isolate));
+}
+
+// static
+Callable CodeFactory::ConstructFunctionForwardVarargs(Isolate* isolate) {
+  return Callable(isolate->builtins()->ConstructFunctionForwardVarargs(),
+                  ConstructForwardVarargsDescriptor(isolate));
+}
+
+// static
 Callable CodeFactory::InterpreterPushArgsThenCall(
     Isolate* isolate, ConvertReceiverMode receiver_mode,
     TailCallMode tail_call_mode, InterpreterPushArgsMode mode) {
@@ -497,6 +508,17 @@ Callable CodeFactory::InterpreterOnStackReplacement(Isolate* isolate) {
 Callable CodeFactory::ArrayConstructor(Isolate* isolate) {
   ArrayConstructorStub stub(isolate);
   return make_callable(stub);
+}
+
+// static
+Callable CodeFactory::ArrayPop(Isolate* isolate) {
+  return Callable(isolate->builtins()->ArrayPop(), BuiltinDescriptor(isolate));
+}
+
+// static
+Callable CodeFactory::ArrayShift(Isolate* isolate) {
+  return Callable(isolate->builtins()->ArrayShift(),
+                  BuiltinDescriptor(isolate));
 }
 
 // static

@@ -590,19 +590,9 @@ class Heap {
 
   enum UpdateAllocationSiteMode { kGlobal, kCached };
 
-  // Taking this lock prevents the GC from entering a phase that relocates
+  // Taking this mutex prevents the GC from entering a phase that relocates
   // object references.
-  class RelocationLock {
-   public:
-    explicit RelocationLock(Heap* heap) : heap_(heap) {
-      heap_->relocation_mutex_.Lock();
-    }
-
-    ~RelocationLock() { heap_->relocation_mutex_.Unlock(); }
-
-   private:
-    Heap* heap_;
-  };
+  base::Mutex* relocation_mutex() { return &relocation_mutex_; }
 
   // Support for partial snapshots.  After calling this we have a linear
   // space to write objects in each space.
@@ -636,16 +626,6 @@ class Heap {
       256 * kPointerMultiplier;
   static const int kMaxOldSpaceSizeHighMemoryDevice = 512 * kPointerMultiplier;
   static const int kMaxOldSpaceSizeHugeMemoryDevice = 1024 * kPointerMultiplier;
-
-  // The executable size has to be a multiple of Page::kPageSize.
-  // Sizes are in MB.
-  static const int kMaxExecutableSizeLowMemoryDevice = 96 * kPointerMultiplier;
-  static const int kMaxExecutableSizeMediumMemoryDevice =
-      192 * kPointerMultiplier;
-  static const int kMaxExecutableSizeHighMemoryDevice =
-      256 * kPointerMultiplier;
-  static const int kMaxExecutableSizeHugeMemoryDevice =
-      256 * kPointerMultiplier;
 
   static const int kTraceRingBufferSize = 512;
   static const int kStacktraceBufferSize = 512;
@@ -702,8 +682,6 @@ class Heap {
   // Generated code can embed direct references to non-writable roots if
   // they are in new space.
   static bool RootCanBeWrittenAfterInitialization(RootListIndex root_index);
-
-  static bool IsUnmodifiedHeapObject(Object** p);
 
   // Zapping is needed for verify heap, and always done in debug builds.
   static inline bool ShouldZapGarbage() {
@@ -1239,7 +1217,9 @@ class Heap {
 
   // Start incremental marking and ensure that idle time handler can perform
   // incremental steps.
-  void StartIdleIncrementalMarking(GarbageCollectionReason gc_reason);
+  void StartIdleIncrementalMarking(
+      GarbageCollectionReason gc_reason,
+      GCCallbackFlags gc_callback_flags = GCCallbackFlags::kNoGCCallbackFlags);
 
   // Starts incremental marking assuming incremental marking is currently
   // stopped.
@@ -1253,7 +1233,8 @@ class Heap {
 
   void FinalizeIncrementalMarkingIfComplete(GarbageCollectionReason gc_reason);
 
-  void RegisterReservationsForBlackAllocation(Reservation* reservations);
+  void RegisterDeserializedObjectsForBlackAllocation(
+      Reservation* reservations, List<HeapObject*>* large_objects);
 
   IncrementalMarking* incremental_marking() { return incremental_marking_; }
 
@@ -1265,11 +1246,9 @@ class Heap {
 
   // The runtime uses this function to notify potentially unsafe object layout
   // changes that require special synchronization with the concurrent marker.
-  // A layout change is unsafe if
-  // - it removes a tagged in-object field.
-  // - it replaces a tagged in-objects field with an untagged in-object field.
   void NotifyObjectLayoutChange(HeapObject* object,
                                 const DisallowHeapAllocation&);
+
 #ifdef VERIFY_HEAP
   // This function checks that either
   // - the map transition is safe,
@@ -1533,6 +1512,7 @@ class Heap {
 #ifdef VERIFY_HEAP
   // Verify the heap is in its normal state before or after a GC.
   void Verify();
+  void VerifyRememberedSetFor(HeapObject* object);
 #endif
 
 #ifdef DEBUG
@@ -2407,6 +2387,7 @@ class Heap {
   friend class IncrementalMarkingJob;
   friend class LargeObjectSpace;
   friend class MarkCompactCollector;
+  friend class MarkCompactCollectorBase;
   friend class MinorMarkCompactCollector;
   friend class MarkCompactMarkingVisitor;
   friend class NewSpace;

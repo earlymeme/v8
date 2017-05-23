@@ -700,6 +700,7 @@ void Verifier::Visitor::Check(Node* node) {
       break;
     }
 
+    case IrOpcode::kJSConstructForwardVarargs:
     case IrOpcode::kJSConstruct:
     case IrOpcode::kJSConstructWithSpread:
     case IrOpcode::kJSConvertReceiver:
@@ -737,6 +738,10 @@ void Verifier::Visitor::Check(Node* node) {
 
     case IrOpcode::kJSGeneratorStore:
       CheckNotTyped(node);
+      break;
+
+    case IrOpcode::kJSCreateGeneratorObject:
+      CheckTypeIs(node, Type::OtherObject());
       break;
 
     case IrOpcode::kJSGeneratorRestoreContinuation:
@@ -1172,6 +1177,10 @@ void Verifier::Visitor::Check(Node* node) {
     case IrOpcode::kCheckString:
       CheckValueInputIs(node, 0, Type::Any());
       CheckTypeIs(node, Type::String());
+      break;
+    case IrOpcode::kCheckSymbol:
+      CheckValueInputIs(node, 0, Type::Any());
+      CheckTypeIs(node, Type::Symbol());
       break;
 
     case IrOpcode::kCheckedInt32Add:
@@ -1706,10 +1715,11 @@ void Verifier::VerifyNode(Node* node) {
   CHECK_EQ(OperatorProperties::GetTotalInputCount(node->op()),
            node->InputCount());
   // If this node has no effect or no control outputs,
-  // we check that no its uses are effect or control inputs.
+  // we check that none of its uses are effect or control inputs.
   bool check_no_control = node->op()->ControlOutputCount() == 0;
   bool check_no_effect = node->op()->EffectOutputCount() == 0;
   bool check_no_frame_state = node->opcode() != IrOpcode::kFrameState;
+  int effect_edges = 0;
   if (check_no_effect || check_no_control) {
     for (Edge edge : node->use_edges()) {
       Node* const user = edge.from();
@@ -1718,6 +1728,7 @@ void Verifier::VerifyNode(Node* node) {
         CHECK(!check_no_control);
       } else if (NodeProperties::IsEffectEdge(edge)) {
         CHECK(!check_no_effect);
+        effect_edges++;
       } else if (NodeProperties::IsFrameStateEdge(edge)) {
         CHECK(!check_no_frame_state);
       }

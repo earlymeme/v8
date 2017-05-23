@@ -419,6 +419,14 @@ void EmitStore(InstructionSelector* selector, InstructionCode opcode,
 
 }  // namespace
 
+void InstructionSelector::VisitStackSlot(Node* node) {
+  StackSlotRepresentation rep = StackSlotRepresentationOf(node->op());
+  int slot = frame_->AllocateSpillSlot(rep.size());
+  OperandGenerator g(this);
+
+  Emit(kArchStackSlot, g.DefineAsRegister(node),
+       sequence()->AddImmediate(Constant(slot)), 0, nullptr);
+}
 
 void InstructionSelector::VisitLoad(Node* node) {
   LoadRepresentation load_rep = LoadRepresentationOf(node->op());
@@ -1720,7 +1728,6 @@ FlagsCondition MapForFlagSettingBinop(FlagsCondition cond) {
       return kNotEqual;
     default:
       UNREACHABLE();
-      return cond;
   }
 }
 
@@ -2454,12 +2461,12 @@ VISIT_ATOMIC_BINOP(Xor)
   V(I32x4MaxS, kArmI32x4MaxS)                   \
   V(I32x4Eq, kArmI32x4Eq)                       \
   V(I32x4Ne, kArmI32x4Ne)                       \
-  V(I32x4LtS, kArmI32x4LtS)                     \
-  V(I32x4LeS, kArmI32x4LeS)                     \
+  V(I32x4GtS, kArmI32x4GtS)                     \
+  V(I32x4GeS, kArmI32x4GeS)                     \
   V(I32x4MinU, kArmI32x4MinU)                   \
   V(I32x4MaxU, kArmI32x4MaxU)                   \
-  V(I32x4LtU, kArmI32x4LtU)                     \
-  V(I32x4LeU, kArmI32x4LeU)                     \
+  V(I32x4GtU, kArmI32x4GtU)                     \
+  V(I32x4GeU, kArmI32x4GeU)                     \
   V(I16x8SConvertI32x4, kArmI16x8SConvertI32x4) \
   V(I16x8Add, kArmI16x8Add)                     \
   V(I16x8AddSaturateS, kArmI16x8AddSaturateS)   \
@@ -2471,15 +2478,15 @@ VISIT_ATOMIC_BINOP(Xor)
   V(I16x8MaxS, kArmI16x8MaxS)                   \
   V(I16x8Eq, kArmI16x8Eq)                       \
   V(I16x8Ne, kArmI16x8Ne)                       \
-  V(I16x8LtS, kArmI16x8LtS)                     \
-  V(I16x8LeS, kArmI16x8LeS)                     \
+  V(I16x8GtS, kArmI16x8GtS)                     \
+  V(I16x8GeS, kArmI16x8GeS)                     \
   V(I16x8UConvertI32x4, kArmI16x8UConvertI32x4) \
   V(I16x8AddSaturateU, kArmI16x8AddSaturateU)   \
   V(I16x8SubSaturateU, kArmI16x8SubSaturateU)   \
   V(I16x8MinU, kArmI16x8MinU)                   \
   V(I16x8MaxU, kArmI16x8MaxU)                   \
-  V(I16x8LtU, kArmI16x8LtU)                     \
-  V(I16x8LeU, kArmI16x8LeU)                     \
+  V(I16x8GtU, kArmI16x8GtU)                     \
+  V(I16x8GeU, kArmI16x8GeU)                     \
   V(I8x16SConvertI16x8, kArmI8x16SConvertI16x8) \
   V(I8x16Add, kArmI8x16Add)                     \
   V(I8x16AddSaturateS, kArmI8x16AddSaturateS)   \
@@ -2490,15 +2497,15 @@ VISIT_ATOMIC_BINOP(Xor)
   V(I8x16MaxS, kArmI8x16MaxS)                   \
   V(I8x16Eq, kArmI8x16Eq)                       \
   V(I8x16Ne, kArmI8x16Ne)                       \
-  V(I8x16LtS, kArmI8x16LtS)                     \
-  V(I8x16LeS, kArmI8x16LeS)                     \
+  V(I8x16GtS, kArmI8x16GtS)                     \
+  V(I8x16GeS, kArmI8x16GeS)                     \
   V(I8x16UConvertI16x8, kArmI8x16UConvertI16x8) \
   V(I8x16AddSaturateU, kArmI8x16AddSaturateU)   \
   V(I8x16SubSaturateU, kArmI8x16SubSaturateU)   \
   V(I8x16MinU, kArmI8x16MinU)                   \
   V(I8x16MaxU, kArmI8x16MaxU)                   \
-  V(I8x16LtU, kArmI8x16LtU)                     \
-  V(I8x16LeU, kArmI8x16LeU)                     \
+  V(I8x16GtU, kArmI8x16GtU)                     \
+  V(I8x16GeU, kArmI8x16GeU)                     \
   V(S128And, kArmS128And)                       \
   V(S128Or, kArmS128Or)                         \
   V(S128Xor, kArmS128Xor)                       \
@@ -2583,8 +2590,7 @@ static const ShuffleEntry<4> arch_s32x4_shuffles[] = {
     {{1, 3, 5, 7}, kArmS32x4UnzipRight},
     {{0, 4, 2, 6}, kArmS32x4TransposeLeft},
     {{1, 5, 3, 7}, kArmS32x4TransposeRight},
-    {{1, 0, 3, 2}, kArmS32x2Reverse},
-};
+    {{1, 0, 3, 2}, kArmS32x2Reverse}};
 
 static const ShuffleEntry<8> arch_s16x8_shuffles[] = {
     {{0, 8, 1, 9, 2, 10, 3, 11}, kArmS16x8ZipLeft},
@@ -2594,8 +2600,7 @@ static const ShuffleEntry<8> arch_s16x8_shuffles[] = {
     {{0, 8, 2, 10, 4, 12, 6, 14}, kArmS16x8TransposeLeft},
     {{1, 9, 3, 11, 5, 13, 7, 15}, kArmS16x8TransposeRight},
     {{3, 2, 1, 0, 7, 6, 5, 4}, kArmS16x4Reverse},
-    {{1, 0, 3, 2, 5, 4, 7, 6}, kArmS16x2Reverse},
-};
+    {{1, 0, 3, 2, 5, 4, 7, 6}, kArmS16x2Reverse}};
 
 static const ShuffleEntry<16> arch_s8x16_shuffles[] = {
     {{0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23},
@@ -2612,8 +2617,7 @@ static const ShuffleEntry<16> arch_s8x16_shuffles[] = {
      kArmS8x16TransposeRight},
     {{7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8}, kArmS8x8Reverse},
     {{3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12}, kArmS8x4Reverse},
-    {{1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14}, kArmS8x2Reverse},
-};
+    {{1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14}, kArmS8x2Reverse}};
 
 // Use a non-shuffle opcode to signal no match.
 static const ArchOpcode kNoShuffle = kArmS128Not;
@@ -2683,6 +2687,27 @@ uint8_t CanonicalizeShuffle(InstructionSelector* selector, Node* node,
   return mask;
 }
 
+int32_t Pack4Lanes(const uint8_t* shuffle, uint8_t mask) {
+  int32_t result = 0;
+  for (int i = 3; i >= 0; i--) {
+    result <<= 8;
+    result |= shuffle[i] & mask;
+  }
+  return result;
+}
+
+void ArrangeShuffleTable(ArmOperandGenerator* g, Node* input0, Node* input1,
+                         InstructionOperand* src0, InstructionOperand* src1) {
+  if (input0 == input1) {
+    // Unary, any q-register can be the table.
+    *src0 = *src1 = g->UseRegister(input0);
+  } else {
+    // Binary, table registers must be consecutive.
+    *src0 = g->UseFixed(input0, q0);
+    *src1 = g->UseFixed(input1, q1);
+  }
+}
+
 }  // namespace
 
 void InstructionSelector::VisitS32x4Shuffle(Node* node) {
@@ -2702,7 +2727,9 @@ void InstructionSelector::VisitS32x4Shuffle(Node* node) {
          g.UseImmediate(lanes * 4));
     return;
   }
-  // TODO(bbudge) vtbl to handle all other shuffles.
+  Emit(kArmS32x4Shuffle, g.DefineAsRegister(node),
+       g.UseRegister(node->InputAt(0)), g.UseRegister(node->InputAt(1)),
+       g.UseImmediate(Pack4Lanes(shuffle, mask)));
 }
 
 void InstructionSelector::VisitS16x8Shuffle(Node* node) {
@@ -2715,13 +2742,20 @@ void InstructionSelector::VisitS16x8Shuffle(Node* node) {
     return;
   }
   ArmOperandGenerator g(this);
+  Node* input0 = node->InputAt(0);
+  Node* input1 = node->InputAt(1);
   uint8_t lanes = TryMatchConcat<8>(shuffle, mask);
   if (lanes != 0) {
-    Emit(kArmS8x16Concat, g.DefineAsRegister(node),
-         g.UseRegister(node->InputAt(0)), g.UseRegister(node->InputAt(1)),
-         g.UseImmediate(lanes * 2));
+    Emit(kArmS8x16Concat, g.DefineAsRegister(node), g.UseRegister(input0),
+         g.UseRegister(input1), g.UseImmediate(lanes * 2));
+    return;
   }
-  // TODO(bbudge) vtbl to handle all other shuffles.
+  // Code generator uses vtbl, arrange sources to form a valid lookup table.
+  InstructionOperand src0, src1;
+  ArrangeShuffleTable(&g, input0, input1, &src0, &src1);
+  Emit(kArmS16x8Shuffle, g.DefineAsRegister(node), src0, src1,
+       g.UseImmediate(Pack4Lanes(shuffle, mask)),
+       g.UseImmediate(Pack4Lanes(shuffle + 4, mask)));
 }
 
 void InstructionSelector::VisitS8x16Shuffle(Node* node) {
@@ -2734,13 +2768,22 @@ void InstructionSelector::VisitS8x16Shuffle(Node* node) {
     return;
   }
   ArmOperandGenerator g(this);
+  Node* input0 = node->InputAt(0);
+  Node* input1 = node->InputAt(1);
   uint8_t lanes = TryMatchConcat<16>(shuffle, mask);
   if (lanes != 0) {
-    Emit(kArmS8x16Concat, g.DefineAsRegister(node),
-         g.UseRegister(node->InputAt(0)), g.UseRegister(node->InputAt(1)),
-         g.UseImmediate(lanes));
+    Emit(kArmS8x16Concat, g.DefineAsRegister(node), g.UseRegister(input0),
+         g.UseRegister(input1), g.UseImmediate(lanes));
+    return;
   }
-  // TODO(bbudge) vtbl to handle all other shuffles.
+  // Code generator uses vtbl, arrange sources to form a valid lookup table.
+  InstructionOperand src0, src1;
+  ArrangeShuffleTable(&g, input0, input1, &src0, &src1);
+  Emit(kArmS8x16Shuffle, g.DefineAsRegister(node), src0, src1,
+       g.UseImmediate(Pack4Lanes(shuffle, mask)),
+       g.UseImmediate(Pack4Lanes(shuffle + 4, mask)),
+       g.UseImmediate(Pack4Lanes(shuffle + 8, mask)),
+       g.UseImmediate(Pack4Lanes(shuffle + 12, mask)));
 }
 
 void InstructionSelector::VisitInt32AbsWithOverflow(Node* node) {

@@ -235,7 +235,7 @@ AllocationResult Heap::AllocateOneByteInternalizedString(
   }
 
   // String maps are all immortal immovable objects.
-  result->set_map_no_write_barrier(map);
+  result->set_map_after_allocation(map, SKIP_WRITE_BARRIER);
   // Set length and hash fields of the allocated string.
   String* answer = String::cast(result);
   answer->set_length(str.length());
@@ -266,7 +266,7 @@ AllocationResult Heap::AllocateTwoByteInternalizedString(Vector<const uc16> str,
     if (!allocation.To(&result)) return allocation;
   }
 
-  result->set_map(map);
+  result->set_map_after_allocation(map);
   // Set length and hash fields of the allocated string.
   String* answer = String::cast(result);
   answer->set_length(str.length());
@@ -554,7 +554,6 @@ bool Heap::AllowedToBeMigrated(HeapObject* obj, AllocationSpace dst) {
       return false;
   }
   UNREACHABLE();
-  return false;
 }
 
 void Heap::CopyBlock(Address dst, Address src, int byte_size) {
@@ -621,7 +620,6 @@ AllocationMemento* Heap::FindAllocationMemento(HeapObject* object) {
       UNREACHABLE();
   }
   UNREACHABLE();
-  return nullptr;
 }
 
 template <Heap::UpdateAllocationSiteMode mode>
@@ -791,12 +789,18 @@ void Heap::SetArgumentsAdaptorDeoptPCOffset(int pc_offset) {
 }
 
 void Heap::SetConstructStubCreateDeoptPCOffset(int pc_offset) {
-  DCHECK(construct_stub_create_deopt_pc_offset() == Smi::kZero);
+  // TODO(tebbi): Remove second half of DCHECK once
+  // FLAG_harmony_restrict_constructor_return is gone.
+  DCHECK(construct_stub_create_deopt_pc_offset() == Smi::kZero ||
+         construct_stub_create_deopt_pc_offset() == Smi::FromInt(pc_offset));
   set_construct_stub_create_deopt_pc_offset(Smi::FromInt(pc_offset));
 }
 
 void Heap::SetConstructStubInvokeDeoptPCOffset(int pc_offset) {
-  DCHECK(construct_stub_invoke_deopt_pc_offset() == Smi::kZero);
+  // TODO(tebbi): Remove second half of DCHECK once
+  // FLAG_harmony_restrict_constructor_return is gone.
+  DCHECK(construct_stub_invoke_deopt_pc_offset() == Smi::kZero ||
+         construct_stub_invoke_deopt_pc_offset() == Smi::FromInt(pc_offset));
   set_construct_stub_invoke_deopt_pc_offset(Smi::FromInt(pc_offset));
 }
 

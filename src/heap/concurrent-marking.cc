@@ -22,6 +22,27 @@
 namespace v8 {
 namespace internal {
 
+// Helper class for storing in-object slot addresses and values.
+class SlotSnapshot {
+ public:
+  SlotSnapshot() : number_of_slots_(0) {}
+  int number_of_slots() const { return number_of_slots_; }
+  Object** slot(int i) const { return snapshot_[i].first; }
+  Object* value(int i) const { return snapshot_[i].second; }
+  void clear() { number_of_slots_ = 0; }
+  void add(Object** slot, Object* value) {
+    snapshot_[number_of_slots_].first = slot;
+    snapshot_[number_of_slots_].second = value;
+    ++number_of_slots_;
+  }
+
+ private:
+  static const int kMaxSnapshotSize = JSObject::kMaxInstanceSize / kPointerSize;
+  int number_of_slots_;
+  std::pair<Object**, Object*> snapshot_[kMaxSnapshotSize];
+  DISALLOW_COPY_AND_ASSIGN(SlotSnapshot);
+};
+
 class ConcurrentMarkingVisitor final
     : public HeapVisitor<int, ConcurrentMarkingVisitor> {
  public:
@@ -30,10 +51,25 @@ class ConcurrentMarkingVisitor final
   explicit ConcurrentMarkingVisitor(ConcurrentMarkingDeque* deque)
       : deque_(deque) {}
 
+  bool ShouldVisit(HeapObject* object) override {
+    return ObjectMarking::GreyToBlack<MarkBit::AccessMode::ATOMIC>(
+        object, marking_state(object));
+  }
+
   void VisitPointers(HeapObject* host, Object** start, Object** end) override {
     for (Object** p = start; p < end; p++) {
-      if (!(*p)->IsHeapObject()) continue;
-      MarkObject(HeapObject::cast(*p));
+      Object* object = reinterpret_cast<Object*>(
+          base::NoBarrier_Load(reinterpret_cast<const base::AtomicWord*>(p)));
+      if (!object->IsHeapObject()) continue;
+      MarkObject(HeapObject::cast(object));
+    }
+  }
+
+  void VisitPointersInSnapshot(const SlotSnapshot& snapshot) {
+    for (int i = 0; i < snapshot.number_of_slots(); i++) {
+      Object* object = snapshot.value(i);
+      if (!object->IsHeapObject()) continue;
+      MarkObject(HeapObject::cast(object));
     }
   }
 
@@ -42,8 +78,11 @@ class ConcurrentMarkingVisitor final
   // ===========================================================================
 
   int VisitJSObject(Map* map, JSObject* object) override {
-    // TODO(ulan): impement snapshot iteration.
-    return BaseClass::VisitJSObject(map, object);
+    int size = JSObject::BodyDescriptor::SizeOf(map, object);
+    const SlotSnapshot& snapshot = MakeSlotSnapshot(map, object, size);
+    if (!ShouldVisit(object)) return 0;
+    VisitPointersInSnapshot(snapshot);
+    return size;
   }
 
   int VisitJSObjectFast(Map* map, JSObject* object) override {
@@ -68,7 +107,7 @@ class ConcurrentMarkingVisitor final
   // ===========================================================================
 
   int VisitCode(Map* map, Code* object) override {
-    // TODO(ulan): push the object to the bail-out deque.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
@@ -77,59 +116,98 @@ class ConcurrentMarkingVisitor final
   // ===========================================================================
 
   int VisitBytecodeArray(Map* map, BytecodeArray* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitJSFunction(Map* map, JSFunction* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitMap(Map* map, Map* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitNativeContext(Map* map, Context* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitSharedFunctionInfo(Map* map, SharedFunctionInfo* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitTransitionArray(Map* map, TransitionArray* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitWeakCell(Map* map, WeakCell* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitJSWeakCollection(Map* map, JSWeakCollection* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
-  void MarkObject(HeapObject* obj) {
-    deque_->Push(obj, MarkingThread::kConcurrent, TargetDeque::kShared);
+  void MarkObject(HeapObject* object) {
+    if (ObjectMarking::WhiteToGrey<MarkBit::AccessMode::ATOMIC>(
+            object, marking_state(object))) {
+      deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kShared);
+    }
   }
 
  private:
+  // Helper class for collecting in-object slot addresses and values.
+  class SlotSnapshottingVisitor final : public ObjectVisitor {
+   public:
+    explicit SlotSnapshottingVisitor(SlotSnapshot* slot_snapshot)
+        : slot_snapshot_(slot_snapshot) {
+      slot_snapshot_->clear();
+    }
+
+    void VisitPointers(HeapObject* host, Object** start,
+                       Object** end) override {
+      for (Object** p = start; p < end; p++) {
+        Object* object = reinterpret_cast<Object*>(
+            base::NoBarrier_Load(reinterpret_cast<const base::AtomicWord*>(p)));
+        slot_snapshot_->add(p, object);
+      }
+    }
+
+   private:
+    SlotSnapshot* slot_snapshot_;
+  };
+
+  const SlotSnapshot& MakeSlotSnapshot(Map* map, HeapObject* object, int size) {
+    // TODO(ulan): Iterate only the existing fields and skip slack at the end
+    // of the object.
+    SlotSnapshottingVisitor visitor(&slot_snapshot_);
+    visitor.VisitPointer(object,
+                         reinterpret_cast<Object**>(object->map_slot()));
+    JSObject::BodyDescriptor::IterateBody(object, size, &visitor);
+    return slot_snapshot_;
+  }
+
+  MarkingState marking_state(HeapObject* object) const {
+    return MarkingState::Internal(object);
+  }
+
   ConcurrentMarkingDeque* deque_;
+  SlotSnapshot slot_snapshot_;
 };
 
 class ConcurrentMarking::Task : public CancelableTask {
@@ -160,10 +238,10 @@ ConcurrentMarking::ConcurrentMarking(Heap* heap, ConcurrentMarkingDeque* deque)
       deque_(deque),
       visitor_(new ConcurrentMarkingVisitor(deque_)),
       is_task_pending_(false) {
-  // Concurrent marking does not work with double unboxing.
-  STATIC_ASSERT(!(V8_CONCURRENT_MARKING && V8_DOUBLE_FIELDS_UNBOXING));
   // The runtime flag should be set only if the compile time flag was set.
-  CHECK(!FLAG_concurrent_marking || V8_CONCURRENT_MARKING);
+#ifndef V8_CONCURRENT_MARKING
+  CHECK(!FLAG_concurrent_marking);
+#endif
 }
 
 ConcurrentMarking::~ConcurrentMarking() { delete visitor_; }
@@ -171,11 +249,13 @@ ConcurrentMarking::~ConcurrentMarking() { delete visitor_; }
 void ConcurrentMarking::Run() {
   double time_ms = heap_->MonotonicallyIncreasingTimeInMs();
   size_t bytes_marked = 0;
+  base::Mutex* relocation_mutex = heap_->relocation_mutex();
   {
     TimedScope scope(&time_ms);
     HeapObject* object;
     while ((object = deque_->Pop(MarkingThread::kConcurrent)) != nullptr) {
-      bytes_marked += visitor_->IterateBody(object);
+      base::LockGuard<base::Mutex> guard(relocation_mutex);
+      bytes_marked += visitor_->Visit(object);
     }
   }
   if (FLAG_trace_concurrent_marking) {

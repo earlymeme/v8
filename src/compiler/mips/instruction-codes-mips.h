@@ -171,10 +171,10 @@ namespace compiler {
   V(MipsI32x4SConvertF32x4)        \
   V(MipsI32x4UConvertF32x4)        \
   V(MipsI32x4Neg)                  \
-  V(MipsI32x4LtS)                  \
-  V(MipsI32x4LeS)                  \
-  V(MipsI32x4LtU)                  \
-  V(MipsI32x4LeU)                  \
+  V(MipsI32x4GtS)                  \
+  V(MipsI32x4GeS)                  \
+  V(MipsI32x4GtU)                  \
+  V(MipsI32x4GeU)                  \
   V(MipsI16x8Splat)                \
   V(MipsI16x8ExtractLane)          \
   V(MipsI16x8ReplaceLane)          \
@@ -185,7 +185,28 @@ namespace compiler {
   V(MipsI16x8Add)                  \
   V(MipsI16x8AddSaturateS)         \
   V(MipsI16x8Sub)                  \
-  V(MipsI16x8SubSaturateS)
+  V(MipsI16x8SubSaturateS)         \
+  V(MipsI16x8Mul)                  \
+  V(MipsI16x8MaxS)                 \
+  V(MipsI16x8MinS)                 \
+  V(MipsI16x8Eq)                   \
+  V(MipsI16x8Ne)                   \
+  V(MipsI16x8GtS)                  \
+  V(MipsI16x8GeS)                  \
+  V(MipsI16x8AddSaturateU)         \
+  V(MipsI16x8SubSaturateU)         \
+  V(MipsI16x8MaxU)                 \
+  V(MipsI16x8MinU)                 \
+  V(MipsI16x8GtU)                  \
+  V(MipsI16x8GeU)                  \
+  V(MipsI8x16Splat)                \
+  V(MipsI8x16ExtractLane)          \
+  V(MipsI8x16ReplaceLane)          \
+  V(MipsI8x16Neg)                  \
+  V(MipsI8x16Shl)                  \
+  V(MipsI8x16ShrS)                 \
+  V(MipsS16x8Select)               \
+  V(MipsS8x16Select)
 
 // Addressing modes represent the "shape" of inputs to an instruction.
 // Many instructions support multiple addressing modes. Addressing modes

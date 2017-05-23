@@ -246,10 +246,18 @@ void ExternalReferenceTable::AddReferences(Isolate* isolate) {
       "libc_memchr");
   Add(ExternalReference::libc_memcpy_function(isolate).address(),
       "libc_memcpy");
+  Add(ExternalReference::libc_memmove_function(isolate).address(),
+      "libc_memmove");
   Add(ExternalReference::libc_memset_function(isolate).address(),
       "libc_memset");
   Add(ExternalReference::try_internalize_string_function(isolate).address(),
       "try_internalize_string_function");
+#ifdef V8_INTL_SUPPORT
+  Add(ExternalReference::intl_convert_one_byte_to_lower(isolate).address(),
+      "intl_convert_one_byte_to_lower");
+  Add(ExternalReference::intl_to_latin1_lower_table(isolate).address(),
+      "intl_to_latin1_lower_table");
+#endif  // V8_INTL_SUPPORT
   Add(ExternalReference::search_string_raw<const uint8_t, const uint8_t>(
           isolate)
           .address(),

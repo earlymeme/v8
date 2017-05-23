@@ -84,7 +84,6 @@ MachineRepresentation MachineRepresentationFromArrayType(
       return MachineRepresentation::kFloat64;
   }
   UNREACHABLE();
-  return MachineRepresentation::kNone;
 }
 
 UseInfo CheckedUseInfoAsWord32FromHint(
@@ -101,7 +100,6 @@ UseInfo CheckedUseInfoAsWord32FromHint(
       return UseInfo::CheckedNumberOrOddballAsWord32();
   }
   UNREACHABLE();
-  return UseInfo::None();
 }
 
 UseInfo CheckedUseInfoAsFloat64FromHint(NumberOperationHint hint) {
@@ -117,7 +115,6 @@ UseInfo CheckedUseInfoAsFloat64FromHint(NumberOperationHint hint) {
       return UseInfo::CheckedNumberOrOddballAsFloat64();
   }
   UNREACHABLE();
-  return UseInfo::None();
 }
 
 UseInfo TruncatingUseInfoFromRepresentation(MachineRepresentation rep) {
@@ -146,7 +143,6 @@ UseInfo TruncatingUseInfoFromRepresentation(MachineRepresentation rep) {
       break;
   }
   UNREACHABLE();
-  return UseInfo::None();
 }
 
 
@@ -990,6 +986,18 @@ class RepresentationSelector {
         DeferReplacement(node, lowering->jsgraph()->Int32Constant(0));
       }
     }
+  }
+
+  void VisitCheck(Node* node, Type* type, SimplifiedLowering* lowering) {
+    if (InputIs(node, type)) {
+      VisitUnop(node, UseInfo::AnyTagged(),
+                MachineRepresentation::kTaggedPointer);
+      if (lower()) DeferReplacement(node, node->InputAt(0));
+    } else {
+      VisitUnop(node, UseInfo::CheckedHeapObjectAsTaggedPointer(),
+                MachineRepresentation::kTaggedPointer);
+    }
+    return;
   }
 
   void VisitCall(Node* node, SimplifiedLowering* lowering) {
@@ -2390,14 +2398,7 @@ class RepresentationSelector {
         return;
       }
       case IrOpcode::kCheckInternalizedString: {
-        if (InputIs(node, Type::InternalizedString())) {
-          VisitUnop(node, UseInfo::AnyTagged(),
-                    MachineRepresentation::kTaggedPointer);
-          if (lower()) DeferReplacement(node, node->InputAt(0));
-        } else {
-          VisitUnop(node, UseInfo::CheckedHeapObjectAsTaggedPointer(),
-                    MachineRepresentation::kTaggedPointer);
-        }
+        VisitCheck(node, Type::InternalizedString(), lowering);
         return;
       }
       case IrOpcode::kCheckNumber: {
@@ -2410,14 +2411,7 @@ class RepresentationSelector {
         return;
       }
       case IrOpcode::kCheckReceiver: {
-        if (InputIs(node, Type::Receiver())) {
-          VisitUnop(node, UseInfo::AnyTagged(),
-                    MachineRepresentation::kTaggedPointer);
-          if (lower()) DeferReplacement(node, node->InputAt(0));
-        } else {
-          VisitUnop(node, UseInfo::CheckedHeapObjectAsTaggedPointer(),
-                    MachineRepresentation::kTaggedPointer);
-        }
+        VisitCheck(node, Type::Receiver(), lowering);
         return;
       }
       case IrOpcode::kCheckSmi: {
@@ -2433,14 +2427,11 @@ class RepresentationSelector {
         return;
       }
       case IrOpcode::kCheckString: {
-        if (InputIs(node, Type::String())) {
-          VisitUnop(node, UseInfo::AnyTagged(),
-                    MachineRepresentation::kTaggedPointer);
-          if (lower()) DeferReplacement(node, node->InputAt(0));
-        } else {
-          VisitUnop(node, UseInfo::CheckedHeapObjectAsTaggedPointer(),
-                    MachineRepresentation::kTaggedPointer);
-        }
+        VisitCheck(node, Type::String(), lowering);
+        return;
+      }
+      case IrOpcode::kCheckSymbol: {
+        VisitCheck(node, Type::Symbol(), lowering);
         return;
       }
 
@@ -2835,6 +2826,8 @@ class RepresentationSelector {
       case IrOpcode::kIfException:
       case IrOpcode::kIfTrue:
       case IrOpcode::kIfFalse:
+      case IrOpcode::kIfValue:
+      case IrOpcode::kIfDefault:
       case IrOpcode::kDeoptimize:
       case IrOpcode::kEffectPhi:
       case IrOpcode::kTerminate:

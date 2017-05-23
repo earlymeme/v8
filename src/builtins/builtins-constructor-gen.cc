@@ -17,7 +17,46 @@
 namespace v8 {
 namespace internal {
 
+void Builtins::Generate_ConstructForwardVarargs(MacroAssembler* masm) {
+  Generate_ForwardVarargs(masm, masm->isolate()->builtins()->Construct());
+}
+
+void Builtins::Generate_ConstructFunctionForwardVarargs(MacroAssembler* masm) {
+  Generate_ForwardVarargs(masm,
+                          masm->isolate()->builtins()->ConstructFunction());
+}
+
 typedef compiler::Node Node;
+
+Node* ConstructorBuiltinsAssembler::CopyFixedArrayBase(Node* fixed_array) {
+  Label if_fixed_array(this), if_fixed_double_array(this), done(this);
+  VARIABLE(result, MachineRepresentation::kTagged);
+  Node* capacity = LoadAndUntagFixedArrayBaseLength(fixed_array);
+  Branch(IsFixedDoubleArrayMap(LoadMap(fixed_array)), &if_fixed_double_array,
+         &if_fixed_array);
+  BIND(&if_fixed_double_array);
+  {
+    ElementsKind kind = FAST_DOUBLE_ELEMENTS;
+    Node* copy = AllocateFixedArray(kind, capacity);
+    CopyFixedArrayElements(kind, fixed_array, kind, copy, capacity, capacity,
+                           SKIP_WRITE_BARRIER);
+    result.Bind(copy);
+    Goto(&done);
+  }
+
+  BIND(&if_fixed_array);
+  {
+    ElementsKind kind = FAST_ELEMENTS;
+    Node* copy = AllocateFixedArray(kind, capacity);
+    CopyFixedArrayElements(kind, fixed_array, kind, copy, capacity, capacity,
+                           UPDATE_WRITE_BARRIER);
+    result.Bind(copy);
+    Goto(&done);
+  }
+
+  BIND(&done);
+  return result.value();
+}
 
 Node* ConstructorBuiltinsAssembler::EmitFastNewClosure(Node* shared_info,
                                                        Node* feedback_vector,
@@ -282,76 +321,8 @@ Node* ConstructorBuiltinsAssembler::EmitFastNewObject(Node* context,
 
   Node* object = AllocateJSObjectFromMap(initial_map, properties.value());
 
-  Node* instance_size_words = ChangeUint32ToWord(LoadObjectField(
-      initial_map, Map::kInstanceSizeOffset, MachineType::Uint8()));
-  Node* instance_size =
-      WordShl(instance_size_words, IntPtrConstant(kPointerSizeLog2));
-
   // Perform in-object slack tracking if requested.
-  Node* bit_field3 = LoadMapBitField3(initial_map);
-  Label slack_tracking(this), finalize(this, Label::kDeferred), done(this);
-  GotoIf(IsSetWord32<Map::ConstructionCounter>(bit_field3), &slack_tracking);
-
-  // Initialize remaining fields.
-  {
-    Comment("no slack tracking");
-    InitializeFieldsWithRoot(object, IntPtrConstant(JSObject::kHeaderSize),
-                             instance_size, Heap::kUndefinedValueRootIndex);
-    Goto(&end);
-  }
-
-  {
-    BIND(&slack_tracking);
-
-    // Decrease generous allocation count.
-    STATIC_ASSERT(Map::ConstructionCounter::kNext == 32);
-    Comment("update allocation count");
-    Node* new_bit_field3 = Int32Sub(
-        bit_field3, Int32Constant(1 << Map::ConstructionCounter::kShift));
-    StoreObjectFieldNoWriteBarrier(initial_map, Map::kBitField3Offset,
-                                   new_bit_field3,
-                                   MachineRepresentation::kWord32);
-    GotoIf(IsClearWord32<Map::ConstructionCounter>(new_bit_field3), &finalize);
-
-    Node* unused_fields = LoadObjectField(
-        initial_map, Map::kUnusedPropertyFieldsOffset, MachineType::Uint8());
-    Node* used_size =
-        IntPtrSub(instance_size, WordShl(ChangeUint32ToWord(unused_fields),
-                                         IntPtrConstant(kPointerSizeLog2)));
-
-    Comment("initialize filler fields (no finalize)");
-    InitializeFieldsWithRoot(object, used_size, instance_size,
-                             Heap::kOnePointerFillerMapRootIndex);
-
-    Comment("initialize undefined fields (no finalize)");
-    InitializeFieldsWithRoot(object, IntPtrConstant(JSObject::kHeaderSize),
-                             used_size, Heap::kUndefinedValueRootIndex);
-    Goto(&end);
-  }
-
-  {
-    // Finalize the instance size.
-    BIND(&finalize);
-
-    Node* unused_fields = LoadObjectField(
-        initial_map, Map::kUnusedPropertyFieldsOffset, MachineType::Uint8());
-    Node* used_size =
-        IntPtrSub(instance_size, WordShl(ChangeUint32ToWord(unused_fields),
-                                         IntPtrConstant(kPointerSizeLog2)));
-
-    Comment("initialize filler fields (finalize)");
-    InitializeFieldsWithRoot(object, used_size, instance_size,
-                             Heap::kOnePointerFillerMapRootIndex);
-
-    Comment("initialize undefined fields (finalize)");
-    InitializeFieldsWithRoot(object, IntPtrConstant(JSObject::kHeaderSize),
-                             used_size, Heap::kUndefinedValueRootIndex);
-
-    CallRuntime(Runtime::kFinalizeInstanceSize, context, initial_map);
-    Goto(&end);
-  }
-
-  BIND(&end);
+  HandleSlackTracking(context, object, initial_map, JSObject::kHeaderSize);
   return object;
 }
 
@@ -639,77 +610,99 @@ TF_BUILTIN(FastCloneShallowArrayDontTrack, ConstructorBuiltinsAssembler) {
 }
 
 Node* ConstructorBuiltinsAssembler::EmitFastCloneShallowObject(
-    Label* call_runtime, Node* closure, Node* literals_index,
-    Node* fast_properties_count) {
-  Node* cell = LoadObjectField(closure, JSFunction::kFeedbackVectorOffset);
-  Node* feedback_vector = LoadObjectField(cell, Cell::kValueOffset);
-  Node* allocation_site = LoadFixedArrayElement(
-      feedback_vector, literals_index, 0, CodeStubAssembler::SMI_PARAMETERS);
-  GotoIf(IsUndefined(allocation_site), call_runtime);
+    Label* call_runtime, Node* closure, Node* literals_index) {
+  Node* allocation_site;
+  {
+    // Load the alloation site.
+    Node* cell = LoadObjectField(closure, JSFunction::kFeedbackVectorOffset);
+    Node* feedback_vector = LoadObjectField(cell, Cell::kValueOffset);
+    allocation_site = LoadFixedArrayElement(feedback_vector, literals_index, 0,
+                                            CodeStubAssembler::SMI_PARAMETERS);
+    GotoIf(IsUndefined(allocation_site), call_runtime);
+  }
 
   Node* boilerplate =
       LoadObjectField(allocation_site, AllocationSite::kTransitionInfoOffset);
   Node* boilerplate_map = LoadMap(boilerplate);
-  Variable properties(this, MachineRepresentation::kTagged,
-                      EmptyFixedArrayConstant());
-  // TODO(cbruni): directly use the property count from the boilerplate map.
-  Variable in_object_property_count(this, MachineType::PointerRepresentation(),
-                                    fast_properties_count);
-  // Directly copy over the property store for dict-mode boilerplates.
-  Label dict_properties(this), allocate_object(this);
-  Branch(IsDictionaryMap(boilerplate_map), &dict_properties, &allocate_object);
-  Bind(&dict_properties);
+
+  VARIABLE(var_properties, MachineRepresentation::kTagged);
   {
-    properties.Bind(
-        CopyNameDictionary(LoadProperties(boilerplate), call_runtime));
-    in_object_property_count.Bind(IntPtrConstant(0));
-    Goto(&allocate_object);
+    // Directly copy over the property store for dict-mode boilerplates.
+    Label if_dictionary(this), if_fast(this), done(this);
+    Branch(IsDictionaryMap(boilerplate_map), &if_dictionary, &if_fast);
+    BIND(&if_dictionary);
+    {
+      var_properties.Bind(
+          CopyNameDictionary(LoadProperties(boilerplate), call_runtime));
+      // Slow objects have no in-object properties.
+      Goto(&done);
+    }
+    BIND(&if_fast);
+    {
+      // TODO(cbruni): support copying out-of-object properties.
+      Node* boilerplate_properties = LoadProperties(boilerplate);
+      GotoIfNot(IsEmptyFixedArray(boilerplate_properties), call_runtime);
+      var_properties.Bind(EmptyFixedArrayConstant());
+      Goto(&done);
+    }
+    BIND(&done);
   }
-  Bind(&allocate_object);
 
-  // Calculate the object and allocation size based on the properties count.
-  Node* object_size =
-      IntPtrAdd(WordShl(in_object_property_count.value(), kPointerSizeLog2),
-                IntPtrConstant(JSObject::kHeaderSize));
-  Node* allocation_size = object_size;
+  VARIABLE(var_elements, MachineRepresentation::kTagged);
+  {
+    // Copy the elements backing store, assuming that it's flat.
+    Label if_empty_fixed_array(this), if_copy_elements(this), done(this);
+    Node* boilerplate_elements = LoadElements(boilerplate);
+    Branch(IsEmptyFixedArray(boilerplate_elements), &if_empty_fixed_array,
+           &if_copy_elements);
+
+    BIND(&if_empty_fixed_array);
+    var_elements.Bind(boilerplate_elements);
+    Goto(&done);
+
+    BIND(&if_copy_elements);
+    CSA_ASSERT(this,
+               Word32Not(IsFixedCOWArrayMap(LoadMap(boilerplate_elements))));
+    var_elements.Bind(CopyFixedArrayBase(boilerplate_elements));
+    Goto(&done);
+    BIND(&done);
+  }
+
+  Node* instance_size = TimesPointerSize(LoadMapInstanceSize(boilerplate_map));
+  Node* allocation_size = instance_size;
   if (FLAG_allocation_site_pretenuring) {
+    // Prepare for inner-allocating the AllocationMemento.
     allocation_size =
-        IntPtrAdd(object_size, IntPtrConstant(AllocationMemento::kSize));
+        IntPtrAdd(instance_size, IntPtrConstant(AllocationMemento::kSize));
   }
-
-  Node* instance_size = LoadMapInstanceSize(boilerplate_map);
-  Node* size_in_words = WordShr(object_size, kPointerSizeLog2);
-  GotoIfNot(WordEqual(instance_size, size_in_words), call_runtime);
 
   Node* copy = AllocateInNewSpace(allocation_size);
-  // Copy boilerplate elements.
-  VARIABLE(offset, MachineType::PointerRepresentation());
-  offset.Bind(IntPtrConstant(-kHeapObjectTag));
-  Node* end_offset = IntPtrAdd(object_size, offset.value());
-  Label loop_body(this, &offset), loop_check(this, &offset);
-  // We should always have an object size greater than zero.
-  Goto(&loop_body);
-  BIND(&loop_body);
   {
-    // The Allocate above guarantees that the copy lies in new space. This
-    // allows us to skip write barriers. This is necessary since we may also be
-    // copying unboxed doubles.
-    Node* field = Load(MachineType::IntPtr(), boilerplate, offset.value());
-    StoreNoWriteBarrier(MachineType::PointerRepresentation(), copy,
-                        offset.value(), field);
-    Goto(&loop_check);
-  }
-  BIND(&loop_check);
-  {
-    offset.Bind(IntPtrAdd(offset.value(), IntPtrConstant(kPointerSize)));
-    GotoIfNot(IntPtrGreaterThanOrEqual(offset.value(), end_offset), &loop_body);
+    // Initialize Object fields.
+    StoreMapNoWriteBarrier(copy, boilerplate_map);
+    StoreObjectFieldNoWriteBarrier(copy, JSObject::kPropertiesOffset,
+                                   var_properties.value());
+    StoreObjectFieldNoWriteBarrier(copy, JSObject::kElementsOffset,
+                                   var_elements.value());
   }
 
-  StoreObjectFieldNoWriteBarrier(copy, JSObject::kPropertiesOffset,
-                                 properties.value());
+  // Copy over in-object properties.
+  Node* start_offset = IntPtrConstant(JSObject::kHeaderSize);
+  BuildFastLoop(start_offset, instance_size,
+                [=](Node* offset) {
+                  // The Allocate above guarantees that the copy lies in new
+                  // space. This allows us to skip write barriers. This is
+                  // necessary since we may also be copying unboxed doubles.
+                  // TODO(verwaest): Allocate and fill in double boxes.
+                  // TODO(cbruni): decode map information and support mutable
+                  // heap numbers.
+                  Node* field = LoadObjectField(boilerplate, offset);
+                  StoreObjectFieldNoWriteBarrier(copy, offset, field);
+                },
+                kPointerSize, INTPTR_PARAMETERS, IndexAdvanceMode::kPost);
 
   if (FLAG_allocation_site_pretenuring) {
-    Node* memento = InnerAllocate(copy, object_size);
+    Node* memento = InnerAllocate(copy, instance_size);
     StoreMapNoWriteBarrier(memento, Heap::kAllocationMementoMapRootIndex);
     StoreObjectFieldNoWriteBarrier(
         memento, AllocationMemento::kAllocationSiteOffset, allocation_site);
@@ -721,48 +714,25 @@ Node* ConstructorBuiltinsAssembler::EmitFastCloneShallowObject(
                                    AllocationSite::kPretenureCreateCountOffset,
                                    memento_create_count);
   }
-
-  // TODO(verwaest): Allocate and fill in double boxes.
   return copy;
 }
 
-template <typename Descriptor>
-void ConstructorBuiltinsAssembler::CreateFastCloneShallowObjectBuiltin(
-    int properties_count) {
-  DCHECK_GE(properties_count, 0);
-  DCHECK_LE(properties_count,
-            ConstructorBuiltins::kMaximumClonedShallowObjectProperties);
+TF_BUILTIN(FastCloneShallowObject, ConstructorBuiltinsAssembler) {
   Label call_runtime(this);
   Node* closure = Parameter(Descriptor::kClosure);
   Node* literals_index = Parameter(Descriptor::kLiteralIndex);
-
-  Node* properties_count_node =
-      IntPtrConstant(ConstructorBuiltins::FastCloneShallowObjectPropertiesCount(
-          properties_count));
-  Node* copy = EmitFastCloneShallowObject(
-      &call_runtime, closure, literals_index, properties_count_node);
+  Node* copy =
+      EmitFastCloneShallowObject(&call_runtime, closure, literals_index);
   Return(copy);
 
   BIND(&call_runtime);
-  Node* constant_properties = Parameter(Descriptor::kConstantProperties);
+  Node* boilerplate_description =
+      Parameter(Descriptor::kBoilerplateDescription);
   Node* flags = Parameter(Descriptor::kFlags);
   Node* context = Parameter(Descriptor::kContext);
   TailCallRuntime(Runtime::kCreateObjectLiteral, context, closure,
-                  literals_index, constant_properties, flags);
+                  literals_index, boilerplate_description, flags);
 }
-
-#define SHALLOW_OBJECT_BUILTIN(props)                                       \
-  TF_BUILTIN(FastCloneShallowObject##props, ConstructorBuiltinsAssembler) { \
-    CreateFastCloneShallowObjectBuiltin<Descriptor>(props);                 \
-  }
-
-SHALLOW_OBJECT_BUILTIN(0);
-SHALLOW_OBJECT_BUILTIN(1);
-SHALLOW_OBJECT_BUILTIN(2);
-SHALLOW_OBJECT_BUILTIN(3);
-SHALLOW_OBJECT_BUILTIN(4);
-SHALLOW_OBJECT_BUILTIN(5);
-SHALLOW_OBJECT_BUILTIN(6);
 
 }  // namespace internal
 }  // namespace v8

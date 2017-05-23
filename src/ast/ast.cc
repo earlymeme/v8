@@ -19,6 +19,7 @@
 #include "src/elements.h"
 #include "src/objects-inl.h"
 #include "src/objects/literal-objects.h"
+#include "src/objects/map.h"
 #include "src/property-details.h"
 #include "src/property.h"
 #include "src/string-stream.h"
@@ -600,7 +601,7 @@ void ObjectLiteral::InitDepthAndFlags() {
     // TODO(verwaest): Remove once we can store them inline.
     if (FLAG_track_double_fields &&
         (value->IsNumberLiteral() || !is_compile_time_value)) {
-      bit_field_ = MayStoreDoublesField::update(bit_field_, true);
+      set_may_store_doubles(true);
     }
 
     is_simple = is_simple && is_compile_time_value;
@@ -1030,6 +1031,24 @@ void Expression::RecordToBooleanTypeFeedback(TypeFeedbackOracle* oracle) {
   }
 }
 
+void SmallMapList::AddMapIfMissing(Handle<Map> map, Zone* zone) {
+  if (!Map::TryUpdate(map).ToHandle(&map)) return;
+  for (int i = 0; i < length(); ++i) {
+    if (at(i).is_identical_to(map)) return;
+  }
+  Add(map, zone);
+}
+
+void SmallMapList::FilterForPossibleTransitions(Map* root_map) {
+  for (int i = list_.length() - 1; i >= 0; i--) {
+    if (at(i)->FindRootMap() != root_map) {
+      list_.RemoveElement(list_.at(i));
+    }
+  }
+}
+
+Handle<Map> SmallMapList::at(int i) const { return Handle<Map>(list_.at(i)); }
+
 SmallMapList* Expression::GetReceiverTypes() {
   switch (node_type()) {
 #define NODE_LIST(V)    \
@@ -1043,7 +1062,6 @@ SmallMapList* Expression::GetReceiverTypes() {
 #undef GENERATE_CASE
     default:
       UNREACHABLE();
-      return nullptr;
   }
 }
 
@@ -1056,7 +1074,6 @@ KeyedAccessStoreMode Expression::GetStoreMode() const {
 #undef GENERATE_CASE
     default:
       UNREACHABLE();
-      return STANDARD_STORE;
   }
 }
 
@@ -1069,7 +1086,6 @@ IcCheckType Expression::GetKeyType() const {
 #undef GENERATE_CASE
     default:
       UNREACHABLE();
-      return PROPERTY;
   }
 }
 
@@ -1083,7 +1099,6 @@ bool Expression::IsMonomorphic() const {
 #undef GENERATE_CASE
     default:
       UNREACHABLE();
-      return false;
   }
 }
 

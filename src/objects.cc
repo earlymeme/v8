@@ -58,6 +58,7 @@
 #include "src/objects/code-cache-inl.h"
 #include "src/objects/compilation-cache-inl.h"
 #include "src/objects/frame-array-inl.h"
+#include "src/objects/map.h"
 #include "src/property-descriptor.h"
 #include "src/prototype.h"
 #include "src/regexp/jsregexp.h"
@@ -90,7 +91,6 @@ std::ostream& operator<<(std::ostream& os, InstanceType instance_type) {
 #undef WRITE_TYPE
   }
   UNREACHABLE();
-  return os << "UNKNOWN";  // Keep the compiler happy.
 }
 
 Handle<FieldType> Object::OptimalType(Isolate* isolate,
@@ -2476,6 +2476,7 @@ Handle<String> String::SlowFlatten(Handle<ConsString> cons,
 
 
 bool String::MakeExternal(v8::String::ExternalStringResource* resource) {
+  DisallowHeapAllocation no_allocation;
   // Externalizing twice leaks the external resource, so it's
   // prohibited by the API.
   DCHECK(!this->IsExternalString());
@@ -2498,7 +2499,9 @@ bool String::MakeExternal(v8::String::ExternalStringResource* resource) {
   bool is_one_byte = this->IsOneByteRepresentation();
   bool is_internalized = this->IsInternalizedString();
   bool has_pointers = StringShape(this).IsIndirect();
-
+  if (has_pointers) {
+    heap->NotifyObjectLayoutChange(this, no_allocation);
+  }
   // Morph the string to an external string by replacing the map and
   // reinitializing the fields.  This won't work if the space the existing
   // string occupies is too small for a regular  external string.
@@ -2544,6 +2547,7 @@ bool String::MakeExternal(v8::String::ExternalStringResource* resource) {
 
 
 bool String::MakeExternal(v8::String::ExternalOneByteStringResource* resource) {
+  DisallowHeapAllocation no_allocation;
   // Externalizing twice leaks the external resource, so it's
   // prohibited by the API.
   DCHECK(!this->IsExternalString());
@@ -2570,6 +2574,10 @@ bool String::MakeExternal(v8::String::ExternalOneByteStringResource* resource) {
   Heap* heap = GetHeap();
   bool is_internalized = this->IsInternalizedString();
   bool has_pointers = StringShape(this).IsIndirect();
+
+  if (has_pointers) {
+    heap->NotifyObjectLayoutChange(this, no_allocation);
+  }
 
   // Morph the string to an external string by replacing the map and
   // reinitializing the fields.  This won't work if the space the existing
@@ -2935,6 +2943,20 @@ void JSObject::PrintInstanceMigration(FILE* file,
   PrintF(file, "\n");
 }
 
+bool JSObject::IsUnmodifiedApiObject(Object** o) {
+  Object* object = *o;
+  if (object->IsSmi()) return false;
+  HeapObject* heap_object = HeapObject::cast(object);
+  if (!object->IsJSObject()) return false;
+  JSObject* js_object = JSObject::cast(object);
+  if (!js_object->WasConstructedFromApiFunction()) return false;
+  Object* maybe_constructor = js_object->map()->GetConstructor();
+  if (!maybe_constructor->IsJSFunction()) return false;
+  JSFunction* constructor = JSFunction::cast(maybe_constructor);
+  if (js_object->elements()->length() != 0) return false;
+
+  return constructor->initial_map() == heap_object->map();
+}
 
 void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
   Heap* heap = GetHeap();
@@ -3333,13 +3355,12 @@ const char* Representation::Mnemonic() const {
     case kExternal: return "x";
     default:
       UNREACHABLE();
-      return NULL;
   }
 }
 
 bool Map::TransitionRemovesTaggedField(Map* target) {
-  int inobject = GetInObjectProperties();
-  int target_inobject = target->GetInObjectProperties();
+  int inobject = NumberOfFields();
+  int target_inobject = target->NumberOfFields();
   for (int i = target_inobject; i < inobject; i++) {
     FieldIndex index = FieldIndex::ForPropertyIndex(this, i);
     if (!IsUnboxedDoubleField(index)) return true;
@@ -3348,8 +3369,8 @@ bool Map::TransitionRemovesTaggedField(Map* target) {
 }
 
 bool Map::TransitionChangesTaggedFieldToUntaggedField(Map* target) {
-  int inobject = GetInObjectProperties();
-  int target_inobject = target->GetInObjectProperties();
+  int inobject = NumberOfFields();
+  int target_inobject = target->NumberOfFields();
   int limit = Min(inobject, target_inobject);
   for (int i = 0; i < limit; i++) {
     FieldIndex index = FieldIndex::ForPropertyIndex(target, i);
@@ -3474,9 +3495,8 @@ void MigrateFastToFast(Handle<JSObject> object, Handle<Map> new_map) {
     // which there is still space, and which does not require a mutable double
     // box (an out-of-object double).
     if (details.location() == kDescriptor ||
-        (have_space &&
-         ((FLAG_unbox_double_fields && object->properties()->length() == 0) ||
-          !details.representation().IsDouble()))) {
+        (have_space && ((FLAG_unbox_double_fields && target_index < 0) ||
+                        !details.representation().IsDouble()))) {
       object->synchronized_set_map(*new_map);
       return;
     }
@@ -4834,16 +4854,15 @@ int AccessorInfo::AppendUnique(Handle<Object> descriptors,
                                                    valid_descriptors);
 }
 
-
-static bool ContainsMap(MapHandleList* maps, Map* map) {
+static bool ContainsMap(MapHandles const& maps, Map* map) {
   DCHECK_NOT_NULL(map);
-  for (int i = 0; i < maps->length(); ++i) {
-    if (!maps->at(i).is_null() && *maps->at(i) == map) return true;
+  for (Handle<Map> current : maps) {
+    if (!current.is_null() && *current == map) return true;
   }
   return false;
 }
 
-Map* Map::FindElementsKindTransitionedMap(MapHandleList* candidates) {
+Map* Map::FindElementsKindTransitionedMap(MapHandles const& candidates) {
   DisallowHeapAllocation no_allocation;
   DisallowDeoptimization no_deoptimization(GetIsolate());
 
@@ -5702,7 +5721,7 @@ void JSObject::MigrateSlowToFast(Handle<JSObject> object,
 
   NotifyMapChange(old_map, new_map, isolate);
 
-#if TRACE_MAPS
+#if V8_TRACE_MAPS
   if (FLAG_trace_maps) {
     PrintF("[TraceMaps: SlowToFast from= %p to= %p reason= %s ]\n",
            reinterpret_cast<void*>(*old_map), reinterpret_cast<void*>(*new_map),
@@ -5834,14 +5853,13 @@ Handle<SeededNumberDictionary> JSObject::NormalizeElements(
     Handle<JSObject> object) {
   DCHECK(!object->HasFixedTypedArrayElements());
   Isolate* isolate = object->GetIsolate();
-  bool is_arguments = object->HasSloppyArgumentsElements();
+  bool is_sloppy_arguments = object->HasSloppyArgumentsElements();
   {
     DisallowHeapAllocation no_gc;
     FixedArrayBase* elements = object->elements();
 
-    if (is_arguments) {
-      FixedArray* parameter_map = FixedArray::cast(elements);
-      elements = FixedArrayBase::cast(parameter_map->get(1));
+    if (is_sloppy_arguments) {
+      elements = SloppyArgumentsElements::cast(elements)->arguments();
     }
 
     if (elements->IsDictionary()) {
@@ -5858,7 +5876,7 @@ Handle<SeededNumberDictionary> JSObject::NormalizeElements(
       object->GetElementsAccessor()->Normalize(object);
 
   // Switch to using the dictionary as the backing storage for elements.
-  ElementsKind target_kind = is_arguments
+  ElementsKind target_kind = is_sloppy_arguments
                                  ? SLOW_SLOPPY_ARGUMENTS_ELEMENTS
                                  : object->HasFastStringWrapperElements()
                                        ? SLOW_STRING_WRAPPER_ELEMENTS
@@ -5867,8 +5885,9 @@ Handle<SeededNumberDictionary> JSObject::NormalizeElements(
   // Set the new map first to satify the elements type assert in set_elements().
   JSObject::MigrateToMap(object, new_map);
 
-  if (is_arguments) {
-    FixedArray::cast(object->elements())->set(1, *dictionary);
+  if (is_sloppy_arguments) {
+    SloppyArgumentsElements::cast(object->elements())
+        ->set_arguments(*dictionary);
   } else {
     object->set_elements(*dictionary);
   }
@@ -8232,7 +8251,6 @@ bool JSObject::HasEnumerableElements() {
       return false;
   }
   UNREACHABLE();
-  return true;
 }
 
 
@@ -8658,7 +8676,7 @@ Handle<Map> Map::Normalize(Handle<Map> fast_map, PropertyNormalizationMode mode,
       cache->Set(fast_map, new_map);
       isolate->counters()->maps_normalized()->Increment();
     }
-#if TRACE_MAPS
+#if V8_TRACE_MAPS
     if (FLAG_trace_maps) {
       PrintF("[TraceMaps: Normalize from= %p to= %p reason= %s ]\n",
              reinterpret_cast<void*>(*fast_map),
@@ -8817,8 +8835,7 @@ Handle<Map> Map::ShareDescriptor(Handle<Map> map,
   return result;
 }
 
-
-#if TRACE_MAPS
+#if V8_TRACE_MAPS
 
 // static
 void Map::TraceTransition(const char* what, Map* from, Map* to, Name* name) {
@@ -8843,8 +8860,7 @@ void Map::TraceAllTransitions(Map* map) {
   }
 }
 
-#endif  // TRACE_MAPS
-
+#endif  // V8_TRACE_MAPS
 
 void Map::ConnectTransition(Handle<Map> parent, Handle<Map> child,
                             Handle<Name> name, SimpleTransitionFlag flag) {
@@ -8859,12 +8875,12 @@ void Map::ConnectTransition(Handle<Map> parent, Handle<Map> child,
   }
   if (parent->is_prototype_map()) {
     DCHECK(child->is_prototype_map());
-#if TRACE_MAPS
+#if V8_TRACE_MAPS
     Map::TraceTransition("NoTransition", *parent, *child, *name);
 #endif
   } else {
     TransitionArray::Insert(parent, name, child, flag);
-#if TRACE_MAPS
+#if V8_TRACE_MAPS
     Map::TraceTransition("Transition", *parent, *child, *name);
 #endif
   }
@@ -8896,7 +8912,7 @@ Handle<Map> Map::CopyReplaceDescriptors(
   } else {
     result->InitializeDescriptors(*descriptors, *layout_descriptor);
   }
-#if TRACE_MAPS
+#if V8_TRACE_MAPS
   if (FLAG_trace_maps &&
       // Mirror conditions above that did not call ConnectTransition().
       (map->is_prototype_map() ||
@@ -9096,7 +9112,7 @@ Handle<Map> Map::CopyForTransition(Handle<Map> map, const char* reason) {
     new_map->InitializeDescriptors(*new_descriptors, *new_layout_descriptor);
   }
 
-#if TRACE_MAPS
+#if V8_TRACE_MAPS
   if (FLAG_trace_maps) {
     PrintF("[TraceMaps: CopyForTransition from= %p to= %p reason= %s ]\n",
            reinterpret_cast<void*>(*map), reinterpret_cast<void*>(*new_map),
@@ -9200,7 +9216,6 @@ bool CanHoldValue(DescriptorArray* descriptors, int descriptor,
     }
   }
   UNREACHABLE();
-  return false;
 }
 
 Handle<Map> UpdateDescriptorForValue(Handle<Map> map, int descriptor,
@@ -9279,7 +9294,7 @@ Handle<Map> Map::TransitionToDataProperty(Handle<Map> map, Handle<Name> name,
   if (!maybe_map.ToHandle(&result)) {
     Isolate* isolate = name->GetIsolate();
     const char* reason = "TooManyFastProperties";
-#if TRACE_MAPS
+#if V8_TRACE_MAPS
     std::unique_ptr<ScopedVector<char>> buffer;
     if (FLAG_trace_maps) {
       ScopedVector<char> name_buffer(100);
@@ -10646,10 +10661,8 @@ const uc16* String::GetTwoByteData(unsigned start) {
     case kConsStringTag:
     case kThinStringTag:
       UNREACHABLE();
-      return NULL;
   }
   UNREACHABLE();
-  return NULL;
 }
 
 
@@ -10826,7 +10839,6 @@ String* ConsStringIterator::Search(int* offset_out) {
     return string;
   }
   UNREACHABLE();
-  return NULL;
 }
 
 
@@ -10874,7 +10886,6 @@ String* ConsStringIterator::NextLeaf(bool* blew_stack) {
     }
   }
   UNREACHABLE();
-  return NULL;
 }
 
 
@@ -10905,7 +10916,6 @@ uint16_t ConsString::ConsStringGet(int index) {
   }
 
   UNREACHABLE();
-  return 0;
 }
 
 uint16_t ThinString::ThinStringGet(int index) { return actual()->Get(index); }
@@ -11634,7 +11644,6 @@ MaybeHandle<String> String::GetSubstitution(Isolate* isolate, Match* match,
   }
 
   UNREACHABLE();
-  return MaybeHandle<String>();
 }
 
 namespace {  // for String.Prototype.lastIndexOf
@@ -12654,7 +12663,7 @@ void JSFunction::SetInitialMap(Handle<JSFunction> function, Handle<Map> map,
   }
   function->set_prototype_or_initial_map(*map);
   map->SetConstructor(*function);
-#if TRACE_MAPS
+#if V8_TRACE_MAPS
   if (FLAG_trace_maps) {
     PrintF("[TraceMaps: InitialMap map= %p SFI= %d_%s ]\n",
            reinterpret_cast<void*>(*map), function->shared()->unique_id(),
@@ -14169,7 +14178,6 @@ Code::Age Code::GetAgeOfCodeAgeStub(Code* code) {
     return kToBeExecutedOnceCodeAge;
   }
   UNREACHABLE();
-  return kNoAgeCodeAge;
 }
 
 Code* Code::GetCodeAgeStub(Isolate* isolate, Age age) {
@@ -14239,7 +14247,6 @@ const char* Code::Kind2String(Kind kind) {
     case NUMBER_OF_KINDS: break;
   }
   UNREACHABLE();
-  return NULL;
 }
 
 // Identify kind of code.
@@ -14248,7 +14255,6 @@ const char* AbstractCode::Kind2String(Kind kind) {
     return Code::Kind2String((Code::Kind)kind);
   if (kind == AbstractCode::INTERPRETED_FUNCTION) return "INTERPRETED_FUNCTION";
   UNREACHABLE();
-  return NULL;
 }
 
 Handle<WeakCell> Code::WeakCellFor(Handle<Code> code) {
@@ -14293,7 +14299,6 @@ const char* Code::ICState2String(InlineCacheState state) {
       return "GENERIC";
   }
   UNREACHABLE();
-  return NULL;
 }
 
 void Code::PrintExtraICState(std::ostream& os,  // NOLINT
@@ -14789,18 +14794,33 @@ void BytecodeArray::Disassemble(std::ostream& os) {
       os << " (" << jump_target << " @ " << iterator.GetJumpTargetOffset()
          << ")";
     }
+    if (interpreter::Bytecodes::IsSwitch(iterator.current_bytecode())) {
+      os << " {";
+      bool first_entry = true;
+      for (const auto& entry : iterator.GetJumpTableTargetOffsets()) {
+        if (first_entry) {
+          first_entry = false;
+        } else {
+          os << ",";
+        }
+        os << " " << entry.case_value << ": @" << entry.target_offset;
+      }
+      os << " }";
+    }
     os << std::endl;
     iterator.Advance();
   }
 
+  os << "Constant pool (size = " << constant_pool()->length() << ")\n";
+#ifdef OBJECT_PRINT
   if (constant_pool()->length() > 0) {
-    os << "Constant pool (size = " << constant_pool()->length() << ")\n";
     constant_pool()->Print();
   }
+#endif
 
+  os << "Handler Table (size = " << handler_table()->Size() << ")\n";
 #ifdef ENABLE_DISASSEMBLER
   if (handler_table()->length() > 0) {
-    os << "Handler Table (size = " << handler_table()->Size() << ")\n";
     HandlerTable::cast(handler_table())->HandlerTableRangePrint(os);
   }
 #endif
@@ -15137,7 +15157,6 @@ const char* DependentCode::DependencyGroupName(DependencyGroup group) {
       return "allocation-site-transition-changed";
   }
   UNREACHABLE();
-  return "?";
 }
 
 
@@ -15391,13 +15410,14 @@ static bool ShouldConvertToSlowElements(JSObject* object, uint32_t capacity,
        object->GetHeap()->InNewSpace(object))) {
     return false;
   }
-  // If the fast-case backing storage takes up roughly three times as
-  // much space (in machine words) as a dictionary backing storage
-  // would, the object should have slow elements.
+  // If the fast-case backing storage takes up much more memory than a
+  // dictionary backing storage would, the object should have slow elements.
   int used_elements = object->GetFastElementsUsage();
-  int dictionary_size = SeededNumberDictionary::ComputeCapacity(used_elements) *
-                        SeededNumberDictionary::kEntrySize;
-  return 3 * static_cast<uint32_t>(dictionary_size) <= *new_capacity;
+  uint32_t size_threshold =
+      SeededNumberDictionary::kPreferFastElementsSizeFactor *
+      SeededNumberDictionary::ComputeCapacity(used_elements) *
+      SeededNumberDictionary::kEntrySize;
+  return size_threshold <= *new_capacity;
 }
 
 
@@ -15452,6 +15472,8 @@ static bool ShouldConvertToFastElements(JSObject* object,
     Object* length = JSArray::cast(object)->length();
     if (!length->IsSmi()) return false;
     *new_capacity = static_cast<uint32_t>(Smi::cast(length)->value());
+  } else if (object->IsJSSloppyArgumentsObject()) {
+    return false;
   } else {
     *new_capacity = dictionary->max_number_key() + 1;
   }
@@ -15496,7 +15518,7 @@ Maybe<bool> JSObject::AddDataElement(Handle<JSObject> object, uint32_t index,
   FixedArrayBase* elements = object->elements();
   ElementsKind dictionary_kind = DICTIONARY_ELEMENTS;
   if (IsSloppyArgumentsElementsKind(kind)) {
-    elements = FixedArrayBase::cast(FixedArray::cast(elements)->get(1));
+    elements = SloppyArgumentsElements::cast(elements)->arguments();
     dictionary_kind = SLOW_SLOPPY_ARGUMENTS_ELEMENTS;
   } else if (IsStringWrapperElementsKind(kind)) {
     dictionary_kind = SLOW_STRING_WRAPPER_ELEMENTS;
@@ -15509,7 +15531,7 @@ Maybe<bool> JSObject::AddDataElement(Handle<JSObject> object, uint32_t index,
                                        SeededNumberDictionary::cast(elements),
                                        index, &new_capacity)
                ? BestFittingFastElementsKind(*object)
-               : dictionary_kind;  // Overwrite in case of arguments.
+               : dictionary_kind;
   } else if (ShouldConvertToSlowElements(
                  *object, static_cast<uint32_t>(elements->length()), index,
                  &new_capacity)) {
@@ -16040,7 +16062,6 @@ const char* JSPromise::Status(int status) {
       return "rejected";
   }
   UNREACHABLE();
-  return NULL;
 }
 
 namespace {
@@ -16253,7 +16274,6 @@ class RegExpKey : public HashTableKey {
     // Plain hash maps, which is where regexp keys are used, don't
     // use this function.
     UNREACHABLE();
-    return MaybeHandle<Object>().ToHandleChecked();
   }
 
   uint32_t HashForObject(Object* obj) override {
@@ -17159,7 +17179,6 @@ ExternalArrayType JSTypedArray::type() {
 
     default:
       UNREACHABLE();
-      return static_cast<ExternalArrayType>(-1);
   }
 }
 
@@ -17175,10 +17194,73 @@ size_t JSTypedArray::element_size() {
 
     default:
       UNREACHABLE();
-      return 0;
   }
 }
 
+// static
+MaybeHandle<JSTypedArray> JSTypedArray::Create(Isolate* isolate,
+                                               Handle<JSFunction> default_ctor,
+                                               int argc, Handle<Object>* argv,
+                                               const char* method_name) {
+  // 1. Let newTypedArray be ? Construct(constructor, argumentList).
+  Handle<Object> new_obj;
+  ASSIGN_RETURN_ON_EXCEPTION(
+      isolate, new_obj, Execution::New(default_ctor, argc, argv), JSTypedArray);
+
+  // 2. Perform ? ValidateTypedArray(newTypedArray).
+  Handle<JSTypedArray> new_array;
+  ASSIGN_RETURN_ON_EXCEPTION(
+      isolate, new_array, JSTypedArray::Validate(isolate, new_obj, method_name),
+      JSTypedArray);
+
+  // 3. If argumentList is a List of a single Number, then
+  // If newTypedArray.[[ArrayLength]] < size, throw a TypeError exception.
+  DCHECK_IMPLIES(argc == 1, argv[0]->IsSmi());
+  if (argc == 1 && new_array->length_value() < argv[0]->Number()) {
+    const MessageTemplate::Template message =
+        MessageTemplate::kTypedArrayTooShort;
+    THROW_NEW_ERROR(isolate, NewTypeError(message), JSTypedArray);
+  }
+
+  // 4. Return newTypedArray.
+  return new_array;
+}
+
+// static
+MaybeHandle<JSTypedArray> JSTypedArray::SpeciesCreate(
+    Isolate* isolate, Handle<JSTypedArray> exemplar, int argc,
+    Handle<Object>* argv, const char* method_name) {
+  // 1. Assert: exemplar is an Object that has a [[TypedArrayName]] internal
+  // slot.
+  DCHECK(exemplar->IsJSTypedArray());
+
+  // 2. Let defaultConstructor be the intrinsic object listed in column one of
+  // Table 51 for exemplar.[[TypedArrayName]].
+  Handle<JSFunction> default_ctor = isolate->uint8_array_fun();
+  switch (exemplar->type()) {
+#define TYPED_ARRAY_CTOR(Type, type, TYPE, ctype, size) \
+  case kExternal##Type##Array: {                        \
+    default_ctor = isolate->type##_array_fun();         \
+    break;                                              \
+  }
+
+    TYPED_ARRAYS(TYPED_ARRAY_CTOR)
+#undef TYPED_ARRAY_CTOR
+    default:
+      UNREACHABLE();
+  }
+
+  // 3. Let constructor be ? SpeciesConstructor(exemplar, defaultConstructor).
+  Handle<Object> ctor;
+  ASSIGN_RETURN_ON_EXCEPTION(
+      isolate, ctor,
+      Object::SpeciesConstructor(isolate, exemplar, default_ctor),
+      JSTypedArray);
+
+  // 4. Return ? TypedArrayCreate(constructor, argumentList).
+  return Create(isolate, Handle<JSFunction>::cast(ctor), argc, argv,
+                method_name);
+}
 
 void JSGlobalObject::InvalidatePropertyCell(Handle<JSGlobalObject> global,
                                             Handle<Name> name) {
@@ -17277,7 +17359,6 @@ class TwoCharHashTableKey : public HashTableKey {
     // The TwoCharHashTableKey is only used for looking in the string
     // table, not for adding to it.
     UNREACHABLE();
-    return MaybeHandle<Object>().ToHandleChecked();
   }
 
  private:
@@ -17379,6 +17460,7 @@ void MakeStringThin(String* string, String* internalized, Isolate* isolate) {
 
   if (!string->IsInternalizedString()) {
     DisallowHeapAllocation no_gc;
+    isolate->heap()->NotifyObjectLayoutChange(string, no_gc);
     bool one_byte = internalized->IsOneByteRepresentation();
     Handle<Map> map = one_byte ? isolate->factory()->thin_one_byte_string_map()
                                : isolate->factory()->thin_string_map();
@@ -17570,7 +17652,6 @@ class StringTableNoAllocateKey : public HashTableKey {
 
   MUST_USE_RESULT Handle<Object> AsHandle(Isolate* isolate) override {
     UNREACHABLE();
-    return Handle<String>();
   }
 
  private:
@@ -19392,7 +19473,6 @@ Object* JSDate::GetUTCField(FieldIndex index,
   }
 
   UNREACHABLE();
-  return NULL;
 }
 
 
@@ -19506,8 +19586,10 @@ Handle<String> JSMessageObject::GetSourceLine() const {
 void JSArrayBuffer::Neuter() {
   CHECK(is_neuterable());
   CHECK(is_external());
-  set_backing_store(NULL);
+  set_backing_store(nullptr);
   set_byte_length(Smi::kZero);
+  set_allocation_base(nullptr);
+  set_allocation_length(0);
   set_was_neutered(true);
   // Invalidate the neutering protector.
   Isolate* const isolate = GetIsolate();
@@ -19516,10 +19598,36 @@ void JSArrayBuffer::Neuter() {
   }
 }
 
+void JSArrayBuffer::FreeBackingStore() {
+  if (allocation_base() == nullptr) {
+    return;
+  }
+  using AllocationMode = ArrayBuffer::Allocator::AllocationMode;
+  const size_t length = allocation_length();
+  const AllocationMode mode = allocation_mode();
+  GetIsolate()->array_buffer_allocator()->Free(allocation_base(), length, mode);
+
+  // Zero out the backing store and allocation base to avoid dangling
+  // pointers.
+  set_backing_store(nullptr);
+  // TODO(eholk): set_byte_length(0) once we aren't using Smis for the
+  // byte_length. We can't do it now because the GC needs to call
+  // FreeBackingStore while it is collecting.
+  set_allocation_base(nullptr);
+  set_allocation_length(0);
+}
 
 void JSArrayBuffer::Setup(Handle<JSArrayBuffer> array_buffer, Isolate* isolate,
                           bool is_external, void* data, size_t allocated_length,
                           SharedFlag shared) {
+  return Setup(array_buffer, isolate, is_external, data, allocated_length, data,
+               allocated_length, shared);
+}
+
+void JSArrayBuffer::Setup(Handle<JSArrayBuffer> array_buffer, Isolate* isolate,
+                          bool is_external, void* allocation_base,
+                          size_t allocation_length, void* data,
+                          size_t byte_length, SharedFlag shared) {
   DCHECK(array_buffer->GetEmbedderFieldCount() ==
          v8::ArrayBuffer::kEmbedderFieldCount);
   for (int i = 0; i < v8::ArrayBuffer::kEmbedderFieldCount; i++) {
@@ -19530,15 +19638,18 @@ void JSArrayBuffer::Setup(Handle<JSArrayBuffer> array_buffer, Isolate* isolate,
   array_buffer->set_is_neuterable(shared == SharedFlag::kNotShared);
   array_buffer->set_is_shared(shared == SharedFlag::kShared);
 
-  Handle<Object> byte_length =
-      isolate->factory()->NewNumberFromSize(allocated_length);
-  CHECK(byte_length->IsSmi() || byte_length->IsHeapNumber());
-  array_buffer->set_byte_length(*byte_length);
+  Handle<Object> heap_byte_length =
+      isolate->factory()->NewNumberFromSize(byte_length);
+  CHECK(heap_byte_length->IsSmi() || heap_byte_length->IsHeapNumber());
+  array_buffer->set_byte_length(*heap_byte_length);
   // Initialize backing store at last to avoid handling of |JSArrayBuffers| that
   // are currently being constructed in the |ArrayBufferTracker|. The
   // registration method below handles the case of registering a buffer that has
   // already been promoted.
   array_buffer->set_backing_store(data);
+
+  array_buffer->set_allocation_base(data);
+  array_buffer->set_allocation_length(allocation_length);
 
   if (data && !is_external) {
     isolate->heap()->RegisterNewArrayBuffer(*array_buffer);
@@ -19562,8 +19673,9 @@ bool JSArrayBuffer::SetupAllocatingData(Handle<JSArrayBuffer> array_buffer,
   // Prevent creating array buffers when serializing.
   DCHECK(!isolate->serializer_enabled());
   if (allocated_length != 0) {
-    isolate->counters()->array_buffer_big_allocations()->AddSample(
-        ConvertToMb(allocated_length));
+    if (allocated_length >= MB)
+      isolate->counters()->array_buffer_big_allocations()->AddSample(
+          ConvertToMb(allocated_length));
     if (initialize) {
       data = isolate->array_buffer_allocator()->Allocate(allocated_length);
     } else {
@@ -19579,8 +19691,9 @@ bool JSArrayBuffer::SetupAllocatingData(Handle<JSArrayBuffer> array_buffer,
     data = NULL;
   }
 
-  JSArrayBuffer::Setup(array_buffer, isolate, false, data, allocated_length,
-                       shared);
+  const bool is_external = false;
+  JSArrayBuffer::Setup(array_buffer, isolate, is_external, data,
+                       allocated_length, shared);
   return true;
 }
 
@@ -19611,6 +19724,8 @@ Handle<JSArrayBuffer> JSTypedArray::MaterializeArrayBuffer(
   // already been promoted.
   buffer->set_backing_store(backing_store);
   isolate->heap()->RegisterNewArrayBuffer(*buffer);
+  buffer->set_allocation_base(backing_store);
+  buffer->set_allocation_length(NumberToSize(buffer->byte_length()));
   memcpy(buffer->backing_store(),
          fixed_typed_array->DataPtr(),
          fixed_typed_array->DataSize());
@@ -19701,7 +19816,6 @@ PropertyCellType PropertyCell::UpdatedType(Handle<PropertyCell> cell,
         return PropertyCellType::kMutable;
       default:
         UNREACHABLE();
-        return PropertyCellType::kMutable;
     }
   }
   switch (type) {
@@ -19719,7 +19833,6 @@ PropertyCellType PropertyCell::UpdatedType(Handle<PropertyCell> cell,
       return PropertyCellType::kMutable;
   }
   UNREACHABLE();
-  return PropertyCellType::kMutable;
 }
 
 Handle<PropertyCell> PropertyCell::PrepareForValue(
@@ -20504,6 +20617,5 @@ ElementsKind JSArrayIterator::ElementsKindForInstanceType(InstanceType type) {
     return kind;
   }
 }
-
 }  // namespace internal
 }  // namespace v8

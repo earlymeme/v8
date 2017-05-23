@@ -340,7 +340,7 @@ RUNTIME_FUNCTION(Runtime_GetOptimizationStatus) {
   HandleScope scope(isolate);
   DCHECK(args.length() == 1 || args.length() == 2);
   int status = 0;
-  if (!isolate->use_crankshaft()) {
+  if (!isolate->use_optimizer()) {
     status |= static_cast<int>(OptimizationStatus::kNeverOptimize);
   }
   if (FLAG_always_opt || FLAG_prepare_always_opt) {
@@ -687,7 +687,6 @@ RUNTIME_FUNCTION(Runtime_Abort) {
   isolate->PrintStack(stderr);
   base::OS::Abort();
   UNREACHABLE();
-  return NULL;
 }
 
 
@@ -699,23 +698,12 @@ RUNTIME_FUNCTION(Runtime_AbortJS) {
   isolate->PrintStack(stderr);
   base::OS::Abort();
   UNREACHABLE();
-  return NULL;
 }
 
 
 RUNTIME_FUNCTION(Runtime_NativeScriptsCount) {
   DCHECK_EQ(0, args.length());
   return Smi::FromInt(Natives::GetBuiltinsCount());
-}
-
-// TODO(5510): remove this.
-RUNTIME_FUNCTION(Runtime_GetV8Version) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(0, args.length());
-
-  const char* version_string = v8::V8::GetVersion();
-
-  return *isolate->factory()->NewStringFromAsciiChecked(version_string);
 }
 
 
@@ -1026,16 +1014,6 @@ RUNTIME_FUNCTION(Runtime_RedirectToWasmInterpreter) {
       WasmInstanceObject::GetOrCreateDebugInfo(instance);
   WasmDebugInfo::RedirectToInterpreter(debug_info,
                                        Vector<int>(&function_index, 1));
-  return isolate->heap()->undefined_value();
-}
-
-RUNTIME_FUNCTION(Runtime_IncrementWaitCount) {
-  isolate->IncrementWaitCountForTesting();
-  return isolate->heap()->undefined_value();
-}
-
-RUNTIME_FUNCTION(Runtime_DecrementWaitCount) {
-  isolate->DecrementWaitCountForTesting();
   return isolate->heap()->undefined_value();
 }
 

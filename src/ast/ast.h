@@ -252,29 +252,15 @@ class SmallMapList final {
   bool is_empty() const { return list_.is_empty(); }
   int length() const { return list_.length(); }
 
-  void AddMapIfMissing(Handle<Map> map, Zone* zone) {
-    if (!Map::TryUpdate(map).ToHandle(&map)) return;
-    for (int i = 0; i < length(); ++i) {
-      if (at(i).is_identical_to(map)) return;
-    }
-    Add(map, zone);
-  }
+  void AddMapIfMissing(Handle<Map> map, Zone* zone);
 
-  void FilterForPossibleTransitions(Map* root_map) {
-    for (int i = list_.length() - 1; i >= 0; i--) {
-      if (at(i)->FindRootMap() != root_map) {
-        list_.RemoveElement(list_.at(i));
-      }
-    }
-  }
+  void FilterForPossibleTransitions(Map* root_map);
 
   void Add(Handle<Map> handle, Zone* zone) {
     list_.Add(handle.location(), zone);
   }
 
-  Handle<Map> at(int i) const {
-    return Handle<Map>(list_.at(i));
-  }
+  Handle<Map> at(int i) const;
 
   Handle<Map> first() const { return at(0); }
   Handle<Map> last() const { return at(length() - 1); }
@@ -1388,7 +1374,7 @@ class ObjectLiteral final : public MaterializedLiteral {
   }
   bool has_elements() const { return HasElementsField::decode(bit_field_); }
   bool has_shallow_properties() const {
-    return depth() == 1 && !has_elements() && !may_store_doubles();
+    return depth() == 1 && !may_store_doubles();
   }
   bool has_rest_property() const {
     return HasRestPropertyField::decode(bit_field_);
@@ -1486,6 +1472,9 @@ class ObjectLiteral final : public MaterializedLiteral {
 
   void InitFlagsForPendingNullPrototype(int i);
 
+  void set_may_store_doubles(bool may_store_doubles) {
+    bit_field_ = MayStoreDoublesField::update(bit_field_, may_store_doubles);
+  }
   void set_fast_elements(bool fast_elements) {
     bit_field_ = FastElementsField::update(bit_field_, fast_elements);
   }
@@ -1682,7 +1671,11 @@ class VariableProxy final : public Expression {
   }
 
   HoleCheckMode hole_check_mode() const {
-    return HoleCheckModeField::decode(bit_field_);
+    HoleCheckMode mode = HoleCheckModeField::decode(bit_field_);
+    DCHECK_IMPLIES(mode == HoleCheckMode::kRequired,
+                   var()->binding_needs_init() ||
+                       var()->local_if_not_shadowed()->binding_needs_init());
+    return mode;
   }
   void set_needs_hole_check() {
     bit_field_ =
@@ -2525,15 +2518,18 @@ class RewritableExpression final : public Expression {
 // desired, must be done beforehand (see the parser).
 class Suspend final : public Expression {
  public:
-  enum OnException { kOnExceptionThrow, kOnExceptionRethrow };
+  // With {kNoControl}, the {Suspend} behaves like yield, except that it never
+  // throws and never causes the current generator to return. This is used to
+  // desugar yield*.
+  enum OnAbruptResume { kOnExceptionThrow, kOnExceptionRethrow, kNoControl };
 
   Expression* generator_object() const { return generator_object_; }
   Expression* expression() const { return expression_; }
-  OnException on_exception() const {
-    return OnExceptionField::decode(bit_field_);
+  OnAbruptResume on_abrupt_resume() const {
+    return OnAbruptResumeField::decode(bit_field_);
   }
   bool rethrow_on_exception() const {
-    return on_exception() == kOnExceptionRethrow;
+    return on_abrupt_resume() == kOnExceptionRethrow;
   }
 
   int suspend_id() const { return suspend_id_; }
@@ -2570,23 +2566,23 @@ class Suspend final : public Expression {
   friend class AstNodeFactory;
 
   Suspend(Expression* generator_object, Expression* expression, int pos,
-          OnException on_exception, SuspendFlags flags)
+          OnAbruptResume on_abrupt_resume, SuspendFlags flags)
       : Expression(pos, kSuspend),
         suspend_id_(-1),
         generator_object_(generator_object),
         expression_(expression) {
-    bit_field_ |=
-        OnExceptionField::encode(on_exception) | FlagsField::encode(flags);
+    bit_field_ |= OnAbruptResumeField::encode(on_abrupt_resume) |
+                  FlagsField::encode(flags);
   }
 
   int suspend_id_;
   Expression* generator_object_;
   Expression* expression_;
 
-  class OnExceptionField
-      : public BitField<OnException, Expression::kNextBitFieldIndex, 1> {};
+  class OnAbruptResumeField
+      : public BitField<OnAbruptResume, Expression::kNextBitFieldIndex, 2> {};
   class FlagsField
-      : public BitField<SuspendFlags, OnExceptionField::kNext,
+      : public BitField<SuspendFlags, OnAbruptResumeField::kNext,
                         static_cast<int>(SuspendFlags::kBitWidth)> {};
 };
 
@@ -2659,6 +2655,14 @@ class FunctionLiteral final : public Expression {
 
   bool AllowsLazyCompilation();
 
+  bool CanSuspend() {
+    if (suspend_count() > 0) {
+      DCHECK(IsResumableFunction(kind()));
+      return true;
+    }
+    return false;
+  }
+
   Handle<String> debug_name() const {
     if (raw_name_ != NULL && !raw_name_->IsEmpty()) {
       return raw_name_->string();
@@ -2675,7 +2679,6 @@ class FunctionLiteral final : public Expression {
       return raw_inferred_name_->string();
     }
     UNREACHABLE();
-    return Handle<String>();
   }
 
   // Only one of {set_inferred_name, set_raw_inferred_name} should be called.
@@ -3241,17 +3244,12 @@ class AstVisitor BASE_EMBEDDED {
 
 class AstNodeFactory final BASE_EMBEDDED {
  public:
-  explicit AstNodeFactory(AstValueFactory* ast_value_factory)
-      : zone_(nullptr), ast_value_factory_(ast_value_factory) {
-    if (ast_value_factory != nullptr) {
-      zone_ = ast_value_factory->zone();
-    }
-  }
+  AstNodeFactory(AstValueFactory* ast_value_factory, Zone* zone)
+      : zone_(zone), ast_value_factory_(ast_value_factory) {}
 
   AstValueFactory* ast_value_factory() const { return ast_value_factory_; }
   void set_ast_value_factory(AstValueFactory* ast_value_factory) {
     ast_value_factory_ = ast_value_factory;
-    zone_ = ast_value_factory->zone();
   }
 
   VariableDeclaration* NewVariableDeclaration(VariableProxy* proxy,
@@ -3293,7 +3291,6 @@ class AstNodeFactory final BASE_EMBEDDED {
       }
     }
     UNREACHABLE();
-    return NULL;
   }
 
   ForOfStatement* NewForOfStatement(ZoneList<const AstRawString*>* labels,
@@ -3400,9 +3397,8 @@ class AstNodeFactory final BASE_EMBEDDED {
     return new (zone_) Literal(ast_value_factory_->NewSymbol(symbol), pos);
   }
 
-  Literal* NewNumberLiteral(double number, int pos, bool with_dot = false) {
-    return new (zone_)
-        Literal(ast_value_factory_->NewNumber(number, with_dot), pos);
+  Literal* NewNumberLiteral(double number, int pos) {
+    return new (zone_) Literal(ast_value_factory_->NewNumber(number), pos);
   }
 
   Literal* NewSmiLiteral(uint32_t number, int pos) {
@@ -3571,11 +3567,11 @@ class AstNodeFactory final BASE_EMBEDDED {
   }
 
   Suspend* NewSuspend(Expression* generator_object, Expression* expression,
-                      int pos, Suspend::OnException on_exception,
+                      int pos, Suspend::OnAbruptResume on_abrupt_resume,
                       SuspendFlags flags) {
     if (!expression) expression = NewUndefinedLiteral(pos);
     return new (zone_)
-        Suspend(generator_object, expression, pos, on_exception, flags);
+        Suspend(generator_object, expression, pos, on_abrupt_resume, flags);
   }
 
   Throw* NewThrow(Expression* exception, int pos) {
@@ -3678,24 +3674,6 @@ class AstNodeFactory final BASE_EMBEDDED {
 
   Zone* zone() const { return zone_; }
   void set_zone(Zone* zone) { zone_ = zone; }
-
-  // Handles use of temporary zones when parsing inner function bodies.
-  class BodyScope {
-   public:
-    BodyScope(AstNodeFactory* factory, Zone* temp_zone, bool use_temp_zone)
-        : factory_(factory), prev_zone_(factory->zone_) {
-      if (use_temp_zone) {
-        factory->zone_ = temp_zone;
-      }
-    }
-
-    void Reset() { factory_->zone_ = prev_zone_; }
-    ~BodyScope() { Reset(); }
-
-   private:
-    AstNodeFactory* factory_;
-    Zone* prev_zone_;
-  };
 
  private:
   // This zone may be deallocated upon returning from parsing a function body

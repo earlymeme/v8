@@ -209,7 +209,7 @@ class ParserBase {
         extension_(extension),
         fni_(nullptr),
         ast_value_factory_(ast_value_factory),
-        ast_node_factory_(ast_value_factory),
+        ast_node_factory_(ast_value_factory, zone),
         runtime_call_stats_(runtime_call_stats),
         parsing_on_main_thread_(parsing_on_main_thread),
         parsing_module_(false),
@@ -1397,17 +1397,16 @@ class ParserBase {
     return factory()->NewReturnStatement(expr, pos);
   }
 
-  inline SuspendExpressionT BuildSuspend(ExpressionT generator,
-                                         ExpressionT expr, int pos,
-                                         Suspend::OnException on_exception,
-                                         SuspendFlags suspend_type) {
+  inline SuspendExpressionT BuildSuspend(
+      ExpressionT generator, ExpressionT expr, int pos,
+      Suspend::OnAbruptResume on_abrupt_resume, SuspendFlags suspend_type) {
     DCHECK_EQ(0,
               static_cast<int>(suspend_type & ~SuspendFlags::kSuspendTypeMask));
     if (V8_UNLIKELY(is_async_generator())) {
       suspend_type = static_cast<SuspendFlags>(suspend_type |
                                                SuspendFlags::kAsyncGenerator);
     }
-    return factory()->NewSuspend(generator, expr, pos, on_exception,
+    return factory()->NewSuspend(generator, expr, pos, on_abrupt_resume,
                                  suspend_type);
   }
 
@@ -2402,7 +2401,6 @@ ParserBase<Impl>::ParseClassPropertyDefinition(
       return impl()->EmptyClassLiteralProperty();
   }
   UNREACHABLE();
-  return impl()->EmptyClassLiteralProperty();
 }
 
 template <typename Impl>
@@ -2628,7 +2626,6 @@ ParserBase<Impl>::ParseObjectPropertyDefinition(ObjectLiteralChecker* checker,
       return impl()->EmptyObjectLiteralProperty();
   }
   UNREACHABLE();
-  return impl()->EmptyObjectLiteralProperty();
 }
 
 template <typename Impl>
@@ -4478,8 +4475,10 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseClassLiteral(
   }
 
   Expect(Token::RBRACE, CHECK_OK);
+  int end_pos = scanner()->location().end_pos;
+  block_scope->set_end_position(end_pos);
   return impl()->RewriteClassLiteral(block_scope, name, &class_info,
-                                     class_token_pos, ok);
+                                     class_token_pos, end_pos, ok);
 }
 
 template <typename Impl>
@@ -4978,7 +4977,6 @@ ParserBase<Impl>::ParseStatementAsUnlabelled(
       return ParseTryStatement(ok);
     default:
       UNREACHABLE();
-      return impl()->NullStatement();
   }
 }
 

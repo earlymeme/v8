@@ -68,6 +68,17 @@ RUNTIME_FUNCTION(Runtime_CompileOptimized_NotConcurrent) {
   return function->code();
 }
 
+RUNTIME_FUNCTION(Runtime_EvictOptimizedCodeSlot) {
+  SealHandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSFunction, function, 0);
+
+  DCHECK(function->is_compiled());
+  function->feedback_vector()->EvictOptimizedCodeMarkedForDeoptimization(
+      function->shared(), "Runtime_EvictOptimizedCodeSlot");
+  return function->code();
+}
+
 RUNTIME_FUNCTION(Runtime_InstantiateAsmJs) {
   HandleScope scope(isolate);
   DCHECK_EQ(args.length(), 4);
@@ -86,9 +97,10 @@ RUNTIME_FUNCTION(Runtime_InstantiateAsmJs) {
     memory = args.at<JSArrayBuffer>(3);
   }
   if (function->shared()->HasAsmWasmData()) {
-    Handle<FixedArray> data(function->shared()->asm_wasm_data());
-    MaybeHandle<Object> result =
-        AsmJs::InstantiateAsmWasm(isolate, data, stdlib, foreign, memory);
+    Handle<SharedFunctionInfo> shared(function->shared());
+    Handle<FixedArray> data(shared->asm_wasm_data());
+    MaybeHandle<Object> result = AsmJs::InstantiateAsmWasm(
+        isolate, shared, data, stdlib, foreign, memory);
     if (!result.is_null()) {
       return *result.ToHandleChecked();
     }

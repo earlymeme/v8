@@ -390,7 +390,6 @@ uint8_t GetBinopProperties(InstructionCode opcode) {
       break;
     default:
       UNREACHABLE();
-      return 0;
   }
   DCHECK_IMPLIES(MustCommuteCondField::decode(result),
                  CanCommuteField::decode(result));
@@ -526,6 +525,15 @@ int32_t LeftShiftForReducedMultiply(Matcher* m) {
 }
 
 }  // namespace
+
+void InstructionSelector::VisitStackSlot(Node* node) {
+  StackSlotRepresentation rep = StackSlotRepresentationOf(node->op());
+  int slot = frame_->AllocateSpillSlot(rep.size());
+  OperandGenerator g(this);
+
+  Emit(kArchStackSlot, g.DefineAsRegister(node),
+       sequence()->AddImmediate(Constant(slot)), 0, nullptr);
+}
 
 void EmitLoad(InstructionSelector* selector, Node* node, InstructionCode opcode,
               ImmediateMode immediate_mode, MachineRepresentation rep,
@@ -1889,7 +1897,6 @@ FlagsCondition MapForFlagSettingBinop(FlagsCondition cond) {
       return kNotEqual;
     default:
       UNREACHABLE();
-      return cond;
   }
 }
 
@@ -1952,7 +1959,6 @@ FlagsCondition MapForTbz(FlagsCondition cond) {
       return kEqual;
     default:
       UNREACHABLE();
-      return cond;
   }
 }
 
@@ -1970,7 +1976,6 @@ FlagsCondition MapForCbz(FlagsCondition cond) {
       return kNotEqual;
     default:
       UNREACHABLE();
-      return cond;
   }
 }
 

@@ -118,7 +118,10 @@ namespace internal {
 #define V8_DOUBLE_FIELDS_UNBOXING 0
 #endif
 
-#define V8_CONCURRENT_MARKING 0
+// Some types of tracing require the SFI to store a unique ID.
+#if defined(V8_TRACE_MAPS) || defined(V8_TRACE_IGNITION)
+#define V8_SFI_HAS_UNIQUE_ID 1
+#endif
 
 typedef uint8_t byte;
 typedef byte* Address;
@@ -353,7 +356,6 @@ inline std::ostream& operator<<(std::ostream& os, DeoptimizeKind kind) {
       return os << "Soft";
   }
   UNREACHABLE();
-  return os;
 }
 
 // Mask for the sign bit in a smi.
@@ -532,7 +534,6 @@ inline std::ostream& operator<<(std::ostream& os, Decision decision) {
       return os << "False";
   }
   UNREACHABLE();
-  return os;
 }
 
 // Supported write barrier modes.
@@ -559,7 +560,6 @@ inline std::ostream& operator<<(std::ostream& os, WriteBarrierKind kind) {
       return os << "FullWriteBarrier";
   }
   UNREACHABLE();
-  return os;
 }
 
 // A flag that indicates whether objects should be pretenured when
@@ -576,7 +576,6 @@ inline std::ostream& operator<<(std::ostream& os, const PretenureFlag& flag) {
       return os << "Tenured";
   }
   UNREACHABLE();
-  return os;
 }
 
 enum MinimumCapacity {
@@ -590,6 +589,8 @@ enum Executability { NOT_EXECUTABLE, EXECUTABLE };
 
 enum VisitMode {
   VISIT_ALL,
+  VISIT_ALL_IN_MINOR_MC_MARK,
+  VISIT_ALL_IN_MINOR_MC_UPDATE,
   VISIT_ALL_IN_SCAVENGE,
   VISIT_ALL_IN_SWEEP_NEWSPACE,
   VISIT_ONLY_STRONG,
@@ -827,7 +828,6 @@ inline std::ostream& operator<<(std::ostream& os, ConvertReceiverMode mode) {
       return os << "ANY";
   }
   UNREACHABLE();
-  return os;
 }
 
 // Defines whether tail call optimization is allowed.
@@ -843,7 +843,6 @@ inline std::ostream& operator<<(std::ostream& os, TailCallMode mode) {
       return os << "DISALLOW_TAIL_CALLS";
   }
   UNREACHABLE();
-  return os;
 }
 
 // Valid hints for the abstract operation OrdinaryToPrimitive,
@@ -875,7 +874,6 @@ inline std::ostream& operator<<(std::ostream& os, CreateArgumentsType type) {
       return os << "REST_PARAMETER";
   }
   UNREACHABLE();
-  return os;
 }
 
 // Used to specify if a macro instruction must perform a smi check on tagged
@@ -977,7 +975,6 @@ inline const char* VariableMode2String(VariableMode mode) {
       return "TEMPORARY";
   }
   UNREACHABLE();
-  return NULL;
 }
 #endif
 
@@ -1036,12 +1033,12 @@ enum VariableLocation : uint8_t {
   kLastVariableLocation = MODULE
 };
 
-// ES6 Draft Rev3 10.2 specifies declarative environment records with mutable
-// and immutable bindings that can be in two states: initialized and
-// uninitialized. In ES5 only immutable bindings have these two states. When
-// accessing a binding, it needs to be checked for initialization. However in
-// the following cases the binding is initialized immediately after creation
-// so the initialization check can always be skipped:
+// ES6 specifies declarative environment records with mutable and immutable
+// bindings that can be in two states: initialized and uninitialized.
+// When accessing a binding, it needs to be checked for initialization.
+// However in the following cases the binding is initialized immediately
+// after creation so the initialization check can always be skipped:
+//
 // 1. Var declared local variables.
 //      var foo;
 // 2. A local variable introduced by a function declaration.
@@ -1050,19 +1047,10 @@ enum VariableLocation : uint8_t {
 //      function x(foo) {}
 // 4. Catch bound variables.
 //      try {} catch (foo) {}
-// 6. Function variables of named function expressions.
+// 6. Function name variables of named function expressions.
 //      var x = function foo() {}
 // 7. Implicit binding of 'this'.
 // 8. Implicit binding of 'arguments' in functions.
-//
-// ES5 specified object environment records which are introduced by ES elements
-// such as Program and WithStatement that associate identifier bindings with the
-// properties of some object. In the specification only mutable bindings exist
-// (which may be non-writable) and have no distinct initialization step. However
-// V8 allows const declarations in global code with distinct creation and
-// initialization steps which are represented by non-writable properties in the
-// global object. As a result also these bindings need to be checked for
-// initialization.
 //
 // The following enum specifies a flag that indicates if the binding needs a
 // distinct initialization step (kNeedsInitialization) or if the binding is
@@ -1237,7 +1225,6 @@ inline std::ostream& operator<<(std::ostream& os,
       return os << "Other";
   }
   UNREACHABLE();
-  return os;
 }
 
 inline uint32_t ObjectHash(Address address) {
@@ -1246,6 +1233,15 @@ inline uint32_t ObjectHash(Address address) {
   return static_cast<uint32_t>(bit_cast<uintptr_t>(address) >>
                                kPointerSizeLog2);
 }
+
+// Type feedback is encoded in such a way that, we can combine the feedback
+// at different points by performing an 'OR' operation. Type feedback moves
+// to a more generic type when we combine feedback.
+// kString          -> kAny
+class ToPrimitiveToStringFeedback {
+ public:
+  enum { kNone = 0x0, kString = 0x1, kAny = 0x3 };
+};
 
 // Type feedback is encoded in such a way that, we can combine the feedback
 // at different points by performing an 'OR' operation. Type feedback moves
@@ -1274,6 +1270,7 @@ class BinaryOperationFeedback {
 // to a more generic type when we combine feedback.
 // kSignedSmall        -> kNumber   -> kAny
 // kInternalizedString -> kString   -> kAny
+//                        kSymbol   -> kAny
 //                        kReceiver -> kAny
 // TODO(epertoso): consider unifying this with BinaryOperationFeedback.
 class CompareOperationFeedback {
@@ -1285,8 +1282,9 @@ class CompareOperationFeedback {
     kNumberOrOddball = 0x7,
     kInternalizedString = 0x8,
     kString = 0x18,
-    kReceiver = 0x20,
-    kAny = 0x7F
+    kSymbol = 0x20,
+    kReceiver = 0x40,
+    kAny = 0xff
   };
 };
 
@@ -1308,7 +1306,6 @@ inline std::ostream& operator<<(std::ostream& os, UnicodeEncoding encoding) {
       return os << "UTF32";
   }
   UNREACHABLE();
-  return os;
 }
 
 enum class IterationKind { kKeys, kValues, kEntries };
@@ -1323,7 +1320,6 @@ inline std::ostream& operator<<(std::ostream& os, IterationKind kind) {
       return os << "IterationKind::kEntries";
   }
   UNREACHABLE();
-  return os;
 }
 
 // Flags for the runtime function kDefineDataPropertyInLiteral. A property can
@@ -1403,7 +1399,6 @@ inline const char* SuspendTypeFor(SuspendFlags flags) {
       break;
   }
   UNREACHABLE();
-  return "";
 }
 
 struct AssemblerDebugInfo {

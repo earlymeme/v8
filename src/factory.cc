@@ -1710,7 +1710,6 @@ Handle<Code> Factory::NewCode(const CodeDesc& desc,
   // The code object has not been fully initialized yet.  We rely on the
   // fact that no allocation will happen from this point on.
   DisallowHeapAllocation no_gc;
-  code->set_gc_metadata(Smi::kZero);
   code->set_ic_age(isolate()->heap()->global_ic_age());
   code->set_instruction_size(desc.instr_size);
   code->set_relocation_info(*reloc_info);
@@ -2084,7 +2083,6 @@ ExternalArrayType Factory::GetArrayTypeFromElementsKind(ElementsKind kind) {
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
     default:
       UNREACHABLE();
-      return kExternalInt8Array;
   }
 #undef TYPED_ARRAY_CASE
 }
@@ -2097,7 +2095,6 @@ size_t Factory::GetExternalArrayElementSize(ExternalArrayType type) {
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
     default:
       UNREACHABLE();
-      return 0;
   }
 #undef TYPED_ARRAY_CASE
 }
@@ -2112,7 +2109,6 @@ ElementsKind GetExternalArrayElementsKind(ExternalArrayType type) {
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
   }
   UNREACHABLE();
-  return FIRST_FIXED_TYPED_ARRAY_ELEMENTS_KIND;
 #undef TYPED_ARRAY_CASE
 }
 
@@ -2124,7 +2120,6 @@ size_t GetFixedTypedArraysElementSize(ElementsKind kind) {
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
     default:
       UNREACHABLE();
-      return 0;
   }
 #undef TYPED_ARRAY_CASE
 }
@@ -2142,7 +2137,6 @@ JSFunction* GetTypedArrayFun(ExternalArrayType type, Isolate* isolate) {
 
     default:
       UNREACHABLE();
-      return NULL;
   }
 }
 
@@ -2159,7 +2153,6 @@ JSFunction* GetTypedArrayFun(ElementsKind elements_kind, Isolate* isolate) {
 
     default:
       UNREACHABLE();
-      return NULL;
   }
 }
 
@@ -2489,7 +2482,7 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
       FeedbackMetadata::New(isolate(), &empty_spec);
   share->set_feedback_metadata(*feedback_metadata, SKIP_WRITE_BARRIER);
   share->set_function_literal_id(FunctionLiteral::kIdTypeInvalid);
-#if TRACE_MAPS
+#if V8_SFI_HAS_UNIQUE_ID
   share->set_unique_id(isolate()->GetNextUniqueSharedFunctionInfoId());
 #endif
   share->set_profiler_ticks(0);
@@ -2802,7 +2795,6 @@ Handle<String> Factory::ToPrimitiveHintString(ToPrimitiveHint hint) {
       return string_string();
   }
   UNREACHABLE();
-  return Handle<String>::null();
 }
 
 Handle<Map> Factory::CreateSloppyFunctionMap(FunctionMode function_mode) {

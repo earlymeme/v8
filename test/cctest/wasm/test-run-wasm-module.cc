@@ -62,7 +62,9 @@ void TestModuleException(Zone* zone, WasmModuleBuilder* builder) {
   isolate->clear_pending_exception();
 }
 
-void ExportAsMain(WasmFunctionBuilder* f) { f->ExportAs(CStrVector("main")); }
+void ExportAsMain(WasmFunctionBuilder* f) {
+  f->builder()->AddExport(CStrVector("main"), f);
+}
 
 #define EMIT_CODE_WITH_END(f, code)  \
   do {                               \
@@ -226,7 +228,7 @@ class WasmSerializationTest {
     WasmFunctionBuilder* f = builder->AddFunction(sigs.i_i());
     byte code[] = {WASM_GET_LOCAL(0), kExprI32Const, 1, kExprI32Add};
     EMIT_CODE_WITH_END(f, code);
-    f->ExportAs(CStrVector(kFunctionName));
+    builder->AddExport(CStrVector(kFunctionName), f);
 
     builder->WriteTo(*buffer);
   }
@@ -1103,33 +1105,50 @@ TEST(Run_WasmModule_Buffer_Externalized_GrowMem) {
     Handle<WasmMemoryObject> mem_obj =
         WasmMemoryObject::New(isolate, memory, 100);
 
-    // TODO(eholk): Skipping calls to externalize when guard pages are enabled
-    // for now. This will have to be dealt with when turning on guard pages as
-    // currently gin assumes that it can take ownership of the ArrayBuffer.
-    // Potential for crashes as this might lead to externalizing an already
-    // externalized buffer.
-    if (!memory->has_guard_region()) v8::Utils::ToLocal(memory)->Externalize();
-    void* backing_store = memory->backing_store();
-    uint64_t byte_length = NumberToSize(memory->byte_length());
+    v8::Utils::ToLocal(memory)->Externalize();
+
     uint32_t result = WasmMemoryObject::Grow(isolate, mem_obj, 4);
+    const bool free_memory = true;
+    wasm::DetachWebAssemblyMemoryBuffer(isolate, memory, free_memory);
     CHECK_EQ(16, result);
-    if (!memory->has_guard_region()) {
-      isolate->array_buffer_allocator()->Free(backing_store, byte_length);
-    }
     memory = handle(mem_obj->buffer());
-    byte_length = NumberToSize(memory->byte_length());
     instance->set_memory_buffer(*memory);
     // Externalize should make no difference without the JS API as in this case
     // the buffer is not detached.
-    if (!memory->has_guard_region()) v8::Utils::ToLocal(memory)->Externalize();
+    v8::Utils::ToLocal(memory)->Externalize();
     result = testing::RunWasmModuleForTesting(isolate, instance, 0, nullptr,
                                               ModuleOrigin::kWasmOrigin);
     CHECK_EQ(kExpectedValue, result);
     // Free the buffer as the tracker does not know about it.
-    if (!memory->has_guard_region()) {
-      isolate->array_buffer_allocator()->Free(
-          memory->backing_store(), NumberToSize(memory->byte_length()));
-    }
+    const v8::ArrayBuffer::Allocator::AllocationMode allocation_mode =
+        memory->allocation_mode();
+    isolate->array_buffer_allocator()->Free(memory->allocation_base(),
+                                            memory->allocation_length(),
+                                            allocation_mode);
+    memory->set_allocation_base(nullptr);
+    memory->set_allocation_length(0);
+  }
+  Cleanup();
+}
+
+TEST(Run_WasmModule_Buffer_Externalized_GrowMemMemSize) {
+  {
+    Isolate* isolate = CcTest::InitIsolateOnce();
+    HandleScope scope(isolate);
+    void* backing_store =
+        isolate->array_buffer_allocator()->Allocate(16 * WasmModule::kPageSize);
+    Handle<JSArrayBuffer> buffer = wasm::SetupArrayBuffer(
+        isolate, backing_store, 16 * WasmModule::kPageSize, backing_store,
+        16 * WasmModule::kPageSize, false, false);
+    Handle<WasmMemoryObject> mem_obj =
+        WasmMemoryObject::New(isolate, buffer, 100);
+    v8::Utils::ToLocal(buffer)->Externalize();
+    int32_t result = WasmMemoryObject::Grow(isolate, mem_obj, 0);
+    wasm::DetachWebAssemblyMemoryBuffer(isolate, buffer, false);
+    CHECK_EQ(16, result);
+
+    isolate->array_buffer_allocator()->Free(backing_store,
+                                            16 * WasmModule::kPageSize);
   }
   Cleanup();
 }
