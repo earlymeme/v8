@@ -52,7 +52,8 @@
                 "--logfile-per-isolate",
                 "demo/test16.js"
             ],
-            "cwd": "${workspaceRoot}"
+            "cwd": "${workspaceRoot}",
+            "initCommands": ["command source /home/zhujianchen/.lldbinit", "command source ${workspaceRoot}/.lldbinit"]
         },
         {
             "type": "lldb",
@@ -70,7 +71,8 @@
                 "--logfile-per-isolate",
                 "demo/split.js"
             ],
-            "cwd": "${workspaceRoot}"
+            "cwd": "${workspaceRoot}",
+            "initCommands": ["command source /home/zhujianchen/.lldbinit", "command source ${workspaceRoot}/.lldbinit"]
         },
         {
             "name": "d8 debug demo",
