@@ -7990,13 +7990,14 @@ class V8_EXPORT V8 {
 };
 
 /**
- * Helper class to create a snapshot data blob.
+ * Helper class to create a snapshot data blob.创建快照
  */
 class V8_EXPORT SnapshotCreator {
  public:
   enum class FunctionCodeHandling { kClear, kKeep };
 
   /**
+   * 创建，进入一个Isolate，启动序列化
    * Create and enter an isolate, and set it up for serialization.
    * The isolate is either created from scratch or from an existing snapshot.
    * The caller keeps ownership of the argument snapshot.
@@ -8015,6 +8016,7 @@ class V8_EXPORT SnapshotCreator {
   Isolate* GetIsolate();
 
   /**
+   * 设置默认上下文
    * Set the default context to be included in the snapshot blob.
    * The snapshot will not contain the global proxy, and we expect one or a
    * global object template to create one, to be provided upon deserialization.
@@ -8022,6 +8024,7 @@ class V8_EXPORT SnapshotCreator {
   void SetDefaultContext(Local<Context> context);
 
   /**
+   * 添加额外的上下文到快照里
    * Add additional context to be included in the snapshot blob.
    * The snapshot will include the global proxy.
    *
@@ -8034,12 +8037,14 @@ class V8_EXPORT SnapshotCreator {
                         SerializeInternalFieldsCallback());
 
   /**
+   * 添加模板到快照里
    * Add a template to be included in the snapshot blob.
    * \returns the index of the template in the snapshot blob.
    */
   size_t AddTemplate(Local<Template> template_obj);
 
   /**
+   * 建立快照
    * Created a snapshot data blob.
    * This must not be called from within a handle scope.
    * \param function_code_handling whether to include compiled function code
@@ -8058,6 +8063,7 @@ class V8_EXPORT SnapshotCreator {
 };
 
 /**
+ * Maybe类型，表示一个对象有value或者没有value
  * A simple Maybe type, representing an object which may or may not have a
  * value, see https://hackage.haskell.org/package/base/docs/Data-Maybe.html.
  *
@@ -8074,11 +8080,13 @@ class Maybe {
   V8_INLINE bool IsJust() const { return has_value_; }
 
   /**
+   * FromJust别名
    * An alias for |FromJust|. Will crash if the Maybe<> is nothing.
    */
   V8_INLINE T ToChecked() const { return FromJust(); }
 
   /**
+   * 转换成T类型的value
    * Converts this Maybe<> to a value of type T. If this Maybe<> is
    * nothing (empty), |false| is returned and |out| is left untouched.
    */
@@ -8140,7 +8148,7 @@ inline Maybe<T> Just(const T& t) {
 
 
 /**
- * An external exception handler.
+ * An external exception handler.异常处理
  */
 class V8_EXPORT TryCatch {
  public:
@@ -8303,7 +8311,7 @@ class V8_EXPORT TryCatch {
 
 
 /**
- * A container for extension names.
+ * A container for extension names.第三方扩展的容器，里面放的是一个个名称
  */
 class V8_EXPORT ExtensionConfiguration {
  public:
@@ -8320,12 +8328,14 @@ class V8_EXPORT ExtensionConfiguration {
 };
 
 /**
+ * 沙箱执行上下文，有一套内置的对象和函数
  * A sandboxed execution context with its own set of built-in objects
  * and functions.
  */
 class V8_EXPORT Context {
  public:
   /**
+   * 返回全局的代理对象
    * Returns the global proxy object.
    *
    * Global proxy object is a thin wrapper whose prototype points to actual
@@ -8340,12 +8350,14 @@ class V8_EXPORT Context {
   Local<Object> Global();
 
   /**
+   * 从上下文中脱离全局对象
    * Detaches the global object from its context before
    * the global object can be reused to create a new context.
    */
   void DetachGlobal();
 
   /**
+   * 创建一个上下文对象，返回新分配的上下文的句柄
    * Creates a new context and returns a handle to the newly allocated
    * context.
    *
@@ -8395,6 +8407,10 @@ class V8_EXPORT Context {
       MaybeLocal<Value> global_object = MaybeLocal<Value>());
 
   /**
+   * 返回一个全局对象，它不会被实际的上下文备份。
+   *
+   * 全局模板有权限检查句柄安装了没
+   *
    * Returns an global object that isn't backed by an actual context.
    *
    * The global template needs to have access checks with handlers installed.
@@ -8422,9 +8438,11 @@ class V8_EXPORT Context {
   void SetSecurityToken(Local<Value> token);
 
   /** Restores the security token to the default value. */
+  // 将安全令牌还原为默认值。
   void UseDefaultSecurityToken();
 
   /** Returns the security token of this context.*/
+  // 返回当前上下文的安全令牌
   Local<Value> GetSecurityToken();
 
   /**
@@ -8451,6 +8469,7 @@ class V8_EXPORT Context {
   enum EmbedderDataFields { kDebugIdIndex = 0 };
 
   /**
+   * 获得指定index的嵌入器数据
    * Gets the embedder data with the given index, which must have been set by a
    * previous call to SetEmbedderData with the same index.
    */
@@ -8465,6 +8484,7 @@ class V8_EXPORT Context {
   Local<Object> GetExtrasBindingObject();
 
   /**
+   * 设置指定索引的嵌入器的数据。index=0表示chrome debugger
    * Sets the embedder data with the given index, growing the data as
    * needed. Note that index 0 currently has a special meaning for Chrome's
    * debugger.

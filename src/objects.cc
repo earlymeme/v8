@@ -11923,7 +11923,7 @@ uint32_t StringHasher::GetHashField() {
       return MakeArrayIndexHash(array_index_, length_);
     }
     return (GetHashCore(raw_running_hash_) << String::kHashShift) |
-           String::kIsNotArrayIndexMask;
+           String::kIsNotArrayIndexMask; // String::kHashShift = 2; String::kIsNotArrayIndexMask=2
   } else {
     return (length_ << String::kHashShift) | String::kIsNotArrayIndexMask;
   }
@@ -14766,7 +14766,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
 }
 #endif  // ENABLE_DISASSEMBLER
 
-
+// 输出bytecode
 void BytecodeArray::Disassemble(std::ostream& os) {
   os << "Parameter count " << parameter_count() << "\n";
   os << "Frame size " << frame_size() << "\n";

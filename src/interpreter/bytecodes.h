@@ -22,6 +22,7 @@ namespace interpreter {
 
 // The list of bytecodes which are interpreted by the interpreter.
 // Format is V(<bytecode>, <accumulator_use>, <operands>).
+// 字节码列表
 #define BYTECODE_LIST(V)                                                       \
   /* Extended width operands */                                                \
   V(Wide, AccumulatorUse::kNone)                                               \
@@ -744,6 +745,12 @@ class V8_EXPORT_PRIVATE Bytecodes final {
 
   // Returns the size of the bytecode including its operands for the
   // given |operand_scale|.
+  /**
+   * 字节码的大小
+   * @param {Bytecode} bytecode 对应的字节码 #define BYTECODE_LIST(V) 宏定义了一堆bytecode，有LdaSmi，LdaZero
+   * @param {OperandScale} operand_scale 操作数的大小（Single是1，Double是2，Quadruple是4个字节）
+   * @return {int}
+   */
   static int Size(Bytecode bytecode, OperandScale operand_scale) {
     DCHECK(bytecode <= Bytecode::kLast);
     STATIC_ASSERT(static_cast<int>(OperandScale::kQuadruple) == 4 &&
@@ -844,6 +851,7 @@ class V8_EXPORT_PRIVATE Bytecodes final {
   static bool BytecodeHasHandler(Bytecode bytecode, OperandScale operand_scale);
 
   // Return the operand scale required to hold a signed operand with |value|.
+  // 根据value的值的大小计算操作数规模
   static OperandScale ScaleForSignedOperand(int32_t value) {
     if (value >= kMinInt8 && value <= kMaxInt8) {
       return OperandScale::kSingle;

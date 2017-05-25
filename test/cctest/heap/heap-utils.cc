@@ -141,6 +141,7 @@ void SimulateFullSpace(v8::internal::NewSpace* space,
   }
 }
 
+// 模拟增量标记
 void SimulateIncrementalMarking(i::Heap* heap, bool force_completion) {
   CHECK(FLAG_incremental_marking);
   i::IncrementalMarking* marking = heap->incremental_marking();

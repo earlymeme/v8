@@ -118,19 +118,19 @@ inline int WhichPowerOf2_64(uint64_t x) {
   return bits;
 }
 
-
+// 最高有效位msb
 inline int MostSignificantBit(uint32_t x) {
   static const int msb4[] = {0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4};
   int nibble = 0;
-  if (x & 0xffff0000) {
+  if (x & 0xffff0000) { // 高16位不变，低16位变成0
     nibble += 16;
     x >>= 16;
   }
-  if (x & 0xff00) {
+  if (x & 0xff00) { // 高8位不变，低8位变成0
     nibble += 8;
     x >>= 8;
   }
-  if (x & 0xf0) {
+  if (x & 0xf0) { // 高4位不变，低8位变成0
     nibble += 4;
     x >>= 4;
   }
@@ -289,6 +289,7 @@ template<> struct make_unsigned<int64_t> {
 // ----------------------------------------------------------------------------
 // BitField is a help template for encoding and decode bitfield with
 // unsigned content.
+// 编码，解码无符号值的位域
 
 template<class T, int shift, int size, class U>
 class BitFieldBase {
@@ -303,25 +304,31 @@ class BitFieldBase {
   static const U kNext = kShift + kSize;
 
   // Value for the field with all bits set.
+  // 最大值，所有位都是1，比如(1<<8)-1是1111 1111
   static const T kMax = static_cast<T>((kOne << size) - 1);
 
   // Tells whether the provided value fits into the bit field.
+  // 判断value是否有效
+  // ~kMax=-256，二进制为：11 0000 0000
   static constexpr bool is_valid(T value) {
     return (static_cast<U>(value) & ~static_cast<U>(kMax)) == 0;
   }
 
   // Returns a type U with the bit field value encoded.
+  // 返回编码过的U类型,就是左移位
   static U encode(T value) {
     DCHECK(is_valid(value));
     return static_cast<U>(value) << shift;
   }
 
   // Returns a type U with the bit field value updated.
+  // 返回更新过的U类型
   static U update(U previous, T value) {
     return (previous & ~kMask) | encode(value);
   }
 
   // Extracts the bit field from the value.
+  // 提取位
   static T decode(U value) {
     return static_cast<T>((value & kMask) >> shift);
   }

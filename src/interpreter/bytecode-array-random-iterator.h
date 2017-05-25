@@ -12,7 +12,7 @@
 namespace v8 {
 namespace internal {
 namespace interpreter {
-
+// 字节码数组随机迭代器
 class V8_EXPORT_PRIVATE BytecodeArrayRandomIterator final
     : public BytecodeArrayAccessor {
  public:
@@ -45,21 +45,23 @@ class V8_EXPORT_PRIVATE BytecodeArrayRandomIterator final
   int current_index() const { return current_index_; }
 
   size_t size() const { return offsets_.size(); }
-
+  //跳到指定index的bytecode
   void GoToIndex(int index) {
     current_index_ = index;
     UpdateOffsetFromIndex();
   }
+  // 访问第一个
   void GoToStart() {
     current_index_ = 0;
     UpdateOffsetFromIndex();
   }
+  // 访问最后一个
   void GoToEnd() {
     DCHECK_LT(offsets_.size() - 1, static_cast<size_t>(INT_MAX));
     current_index_ = static_cast<int>(offsets_.size() - 1);
     UpdateOffsetFromIndex();
   }
-
+  // 是否是有效的迭代器，比如index超出了
   bool IsValid() const;
 
  private:

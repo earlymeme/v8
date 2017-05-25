@@ -247,10 +247,11 @@ void AstValue::Internalize(Isolate* isolate) {
   }
 }
 
+// 得到一个字节的字符串
 AstRawString* AstValueFactory::GetOneByteStringInternal(
     Vector<const uint8_t> literal) {
   if (literal.length() == 1 && IsInRange(literal[0], 'a', 'z')) {
-    int key = literal[0] - 'a';
+    int key = literal[0] - 'a'; // 字符相减，减的是对应的unicode码，比如d-a=3
     if (one_character_strings_[key] == nullptr) {
       uint32_t hash = StringHasher::HashSequentialString<uint8_t>(
           literal.start(), literal.length(), hash_seed_);

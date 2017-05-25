@@ -24,6 +24,7 @@ namespace interpreter {
 using compiler::CodeAssemblerState;
 using compiler::Node;
 
+// 汇编解释器
 InterpreterAssembler::InterpreterAssembler(CodeAssemblerState* state,
                                            Bytecode bytecode,
                                            OperandScale operand_scale)

@@ -846,7 +846,7 @@ void BytecodeGenerator::GenerateBytecode(uintptr_t stack_limit) {
   DisallowHandleAllocation no_handles;
   DisallowHandleDereference no_deref;
 
-  InitializeAstVisitor(stack_limit);
+  InitializeAstVisitor(stack_limit); // stack_limit是个地址，指向decls_
 
   // Initialize the incoming context.
   ContextScope incoming_context(this, closure_scope(), false);
@@ -1141,8 +1141,8 @@ void BytecodeGenerator::VisitDeclarations(Declaration::List* declarations) {
   for (Declaration* decl : *declarations) {
     RegisterAllocationScope register_scope(this);
     Visit(decl);
-    printf("BytecodeGenerator::VisitDeclarations decl: \n");
-    decl->Print();
+//    printf("BytecodeGenerator::VisitDeclarations decl: \n");
+//    decl->Print();
   }
   if (globals_builder()->empty()) return;
 

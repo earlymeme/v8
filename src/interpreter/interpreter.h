@@ -36,18 +36,22 @@ class Interpreter {
   virtual ~Interpreter() {}
 
   // Returns the interrupt budget which should be used for the profiler counter.
+  // 返回中断的预算，用来做profile计数
   static int InterruptBudget();
 
   // Creates a compilation job which will generate bytecode for |info|.
   static CompilationJob* NewCompilationJob(CompilationInfo* info);
 
   // Return bytecode handler for |bytecode|.
+  // 返回字节码句柄
   Code* GetBytecodeHandler(Bytecode bytecode, OperandScale operand_scale);
 
   // GC support.
+  // 支持GC
   void IterateDispatchTable(RootVisitor* v);
 
   // Disassembler support (only useful with ENABLE_DISASSEMBLER defined).
+  // 反汇编
   const char* LookupNameOfBytecodeHandler(Code* code);
 
   V8_EXPORT_PRIVATE Local<v8::Object> GetDispatchCountersObject();

@@ -154,10 +154,11 @@ TEST(StressJS) {
 
   PropertyAttributes attrs = NONE;
   Handle<AccessorInfo> foreign = TestAccessorInfo(isolate, attrs);
+  foreign->Print();
   Map::EnsureDescriptorSlack(map, 1);
-
+  Object* n = foreign->name();
   Descriptor d = Descriptor::AccessorConstant(
-      Handle<Name>(Name::cast(foreign->name())), foreign, attrs);
+      Handle<Name>(Name::cast(n)), foreign, attrs);
   map->AppendDescriptor(&d);
 
   // Add the Foo constructor the global object.
@@ -235,8 +236,8 @@ TEST(CodeRange) {
           &allocated);
       CHECK(base != NULL);
       blocks.Add(::Block(base, static_cast<int>(allocated)));
-      current_allocated += static_cast<int>(allocated);
-      total_allocated += static_cast<int>(allocated);
+      current_allocated += static_cast<int>(allocated); // 1M
+      total_allocated += static_cast<int>(allocated); // 1M
     } else {
       // Free a block.
       int index = Pseudorandom() % blocks.length();

@@ -111,7 +111,7 @@ class V8_EXPORT_PRIVATE BytecodeNode final {
   const uint32_t* operands() const { return operands_; }
 
   void update_operand0(uint32_t operand0) { SetOperand(0, operand0); }
-
+  // 操作数的个数，除了类似Bytecode::kForInNext以外的
   int operand_count() const { return operand_count_; }
   OperandScale operand_scale() const { return operand_scale_; }
 

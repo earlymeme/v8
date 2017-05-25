@@ -1,0 +1,27 @@
+{
+    "files.associations": {
+        "algorithm": "cpp",
+        "*.tcc": "cpp",
+        "type_traits": "cpp",
+        "atomic": "cpp",
+        "optional": "cpp",
+        "functional": "cpp",
+        "locale": "cpp",
+        "memory": "cpp",
+        "system_error": "cpp",
+        "tuple": "cpp",
+        "utility": "cpp",
+        "iostream": "cpp",
+        "iterator": "cpp",
+        "__locale": "cpp",
+        "future": "cpp",
+        "typeinfo": "cpp",
+        "typeindex": "cpp",
+        "__functional_03": "cpp",
+        "hash_map": "cpp",
+        "__hash_table": "cpp",
+        "any": "cpp",
+        "ios": "cpp",
+        "string": "cpp"
+    }
+}

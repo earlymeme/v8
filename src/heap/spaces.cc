@@ -1266,7 +1266,7 @@ bool PagedSpace::SetUp() { return true; }
 
 bool PagedSpace::HasBeenSetUp() { return true; }
 
-
+// 卸载
 void PagedSpace::TearDown() {
   for (auto it = begin(); it != end();) {
     Page* page = *(it++);  // Will be erased.
@@ -1278,6 +1278,7 @@ void PagedSpace::TearDown() {
   accounting_stats_.Clear();
 }
 
+// 再注满
 void PagedSpace::RefillFreeList() {
   // Any PagedSpace might invoke RefillFreeList. We filter all but our old
   // generation spaces out.
@@ -1327,6 +1328,7 @@ void PagedSpace::MergeCompactionSpace(CompactionSpace* other) {
   AccountCommitted(other->CommittedMemory());
 
   // Move over pages.
+  // 移动页
   for (auto it = other->begin(); it != other->end();) {
     Page* p = *(it++);
 
@@ -1341,7 +1343,7 @@ void PagedSpace::MergeCompactionSpace(CompactionSpace* other) {
   }
 }
 
-
+// 计算物理内存大小
 size_t PagedSpace::CommittedPhysicalMemory() {
   if (!base::VirtualMemory::HasLazyCommits()) return CommittedMemory();
   MemoryChunk::UpdateHighWaterMark(allocation_info_.top());

@@ -163,7 +163,8 @@ InterpreterCompilationJob::Status InterpreterCompilationJob::PrepareJobImpl() {
 
   return SUCCEEDED;
 }
-
+// 编译任务的具体实现
+// 由CompilationJob::ExecuteJob调用
 InterpreterCompilationJob::Status InterpreterCompilationJob::ExecuteJobImpl() {
   TimerScope runtimeTimer =
       executed_on_background_thread()
@@ -172,7 +173,8 @@ InterpreterCompilationJob::Status InterpreterCompilationJob::ExecuteJobImpl() {
   // TODO(lpy): add support for background compilation RCS trace.
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.CompileIgnition");
 
-  generator()->GenerateBytecode(stack_limit());
+  generator()->GenerateBytecode(stack_limit()); // 生成器生成字节码，stack_limit指向的就是ThreadedList<Declaration>* declarations()
+    // { return &decls_; }对应的decls_的head_指针
 
   if (generator()->HasStackOverflow()) {
     return FAILED;

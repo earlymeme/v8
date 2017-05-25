@@ -30,7 +30,7 @@ void BytecodeNode::Print(std::ostream& os) const {
   os << static_cast<const void*>(this);
 #endif  // DEBUG
 }
-
+// 重载==比较符，比较内存地址，如果不相等，就比较字节码和操作数
 bool BytecodeNode::operator==(const BytecodeNode& other) const {
   if (this == &other) {
     return true;

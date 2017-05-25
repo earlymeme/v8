@@ -1085,7 +1085,7 @@ double IncrementalMarking::AdvanceIncrementalMarking(
   return remaining_time_in_ms;
 }
 
-
+// 结束清理
 void IncrementalMarking::FinalizeSweeping() {
   DCHECK(state_ == SWEEPING);
   if (heap_->mark_compact_collector()->sweeping_in_progress() &&

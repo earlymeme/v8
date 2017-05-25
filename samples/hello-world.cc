@@ -9,6 +9,7 @@
 
 #include "include/libplatform/libplatform.h"
 #include "include/v8.h"
+#include "src/utils.h"
 
 using namespace v8;
 
@@ -19,6 +20,12 @@ int main(int argc, char* argv[]) {
   Platform* platform = platform::CreateDefaultPlatform();
   V8::InitializePlatform(platform);
   V8::Initialize();
+
+  printf("----------------- %d\n", v8::internal::HexValue(17)); // -1
+  const uint32_t a = 11;
+  printf("---------------- %d\n", v8::base::bits::CountPopulation(a)); // 3
+  const uint32_t b = 10;
+  printf("---------------- %d\n", v8::base::bits::CountTrailingZeros(b)); // 1
 
   // Create a new Isolate and make it the current one.
   Isolate::CreateParams create_params;

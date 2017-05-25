@@ -27,6 +27,7 @@ class CheckedNumeric;
 namespace bits {
 
 // CountPopulation32(value) returns the number of bits set in |value|.
+// 返回value绝对值1的个数
 inline unsigned CountPopulation32(uint32_t value) {
 #if V8_HAS_BUILTIN_POPCOUNT
   return __builtin_popcount(value);
@@ -77,7 +78,7 @@ inline unsigned CountLeadingZeros32(uint32_t value) {
   value = value | (value >> 2);
   value = value | (value >> 4);
   value = value | (value >> 8);
-  value = value | (value >> 16);
+  value = value | (value >> 16); // 把所有位设置成1
   return CountPopulation32(~value);
 #endif
 }
@@ -94,7 +95,7 @@ inline unsigned CountLeadingZeros64(uint64_t value) {
   value = value | (value >> 4);
   value = value | (value >> 8);
   value = value | (value >> 16);
-  value = value | (value >> 32);
+  value = value | (value >> 32); // 先把说有位设置成1，https://www.hackerearth.com/practice/notes/bit-manipulation/
   return CountPopulation64(~value);
 #endif
 }
@@ -149,6 +150,7 @@ inline unsigned CountTrailingZeros64(uint64_t value) {
 }
 
 // Overloaded versions of CountTrailingZeros32/64.
+// 计算value里面尾部0的个数，比如1010得到1
 inline unsigned CountTrailingZeros(uint32_t value) {
   return CountTrailingZeros32(value);
 }
@@ -158,13 +160,16 @@ inline unsigned CountTrailingZeros(uint64_t value) {
 }
 
 // Returns true iff |value| is a power of 2.
+// https://www.hackerearth.com/practice/notes/bit-manipulation/
+// value检查是否是0，!(value & (value - 1))检查value是否是2的幂
 constexpr inline bool IsPowerOfTwo32(uint32_t value) {
   return value && !(value & (value - 1));
 }
 
 
 // Returns true iff |value| is a power of 2.
-constexpr inline bool IsPowerOfTwo64(uint64_t value) {
+// 是否是2的幂，处理的是类型是uint64_t
+inline bool IsPowerOfTwo64(uint64_t value) {
   return value && !(value & (value - 1));
 }
 
@@ -217,6 +222,7 @@ inline uint64_t RotateLeft64(uint64_t value, uint64_t shift) {
 // SignedAddOverflow32(lhs,rhs,val) performs a signed summation of |lhs| and
 // |rhs| and stores the result into the variable pointed to by |val| and
 // returns true if the signed summation resulted in an overflow.
+// 处理加法溢出，返回val指针指向结果，如果溢出了返回true
 inline bool SignedAddOverflow32(int32_t lhs, int32_t rhs, int32_t* val) {
 #if V8_HAS_BUILTIN_SADD_OVERFLOW
   return __builtin_sadd_overflow(lhs, rhs, val);
