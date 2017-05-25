@@ -2299,7 +2299,7 @@ void SourceGroup::Execute(Isolate* isolate) {
       Shell::Exit(1);
     }
     Shell::options.script_executed = true;
-    if (!Shell::ExecuteString(isolate, source, file_name, true, true)) {
+    if (!Shell::ExecuteString(isolate, source, file_name, false, true)) {
       exception_was_thrown = true;
       break;
     }

@@ -169,7 +169,7 @@ constexpr inline bool IsPowerOfTwo32(uint32_t value) {
 
 // Returns true iff |value| is a power of 2.
 // 是否是2的幂，处理的是类型是uint64_t
-inline bool IsPowerOfTwo64(uint64_t value) {
+constexpr inline bool IsPowerOfTwo64(uint64_t value) {
   return value && !(value & (value - 1));
 }
 

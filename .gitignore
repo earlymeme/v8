@@ -100,3 +100,6 @@ turbo*.cfg
 turbo*.dot
 turbo*.json
 v8.ignition_dispatches_table.json
+.idea
+*.ok.wasm
+*.failed.wasm

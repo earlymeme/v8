@@ -194,11 +194,12 @@ TEST(StressJS) {
 unsigned int Pseudorandom() {
   static uint32_t lo = 2345;
   lo = 18273 * (lo & 0xFFFF) + (lo >> 16);  // Provably not 0.
-  return lo & 0xFFFF;
+  return lo & 0xFFFF; // 清除前面16位为0
 }
 
 
 // Plain old data class.  Represents a block of allocated memory.
+// 一个分配内存块
 class Block {
  public:
   Block(Address base_arg, int size_arg)
@@ -236,8 +237,8 @@ TEST(CodeRange) {
           &allocated);
       CHECK(base != NULL);
       blocks.Add(::Block(base, static_cast<int>(allocated)));
-      current_allocated += static_cast<int>(allocated); // 1M
-      total_allocated += static_cast<int>(allocated); // 1M
+      current_allocated += static_cast<int>(allocated); // 4M
+      total_allocated += static_cast<int>(allocated); // 4M
     } else {
       // Free a block.
       int index = Pseudorandom() % blocks.length();

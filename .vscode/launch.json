@@ -1,7 +1,19 @@
 {
     "version": "0.2.0",
     "configurations": [
-
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "cctest test-alloc",
+            "program": "${workspaceRoot}/out.gn/x64.debug/cctest",
+            "args": ["test-alloc/CodeRange"],
+            "cwd": "${workspaceRoot}",
+            "sourceMap": { 
+                "/build/glibc-cxyGtm/glibc-2.24/csu/libc-start.c" : "/home/zhujianchen/libc-start.c",
+                "/build/glibc-cxyGtm/glibc-2.24/" : "/home/zhujianchen/glibc-2.24/"
+            },
+            "initCommands": ["command source /home/zhujianchen/.lldbinit", "command source ${workspaceRoot}/.lldbinit"]
+        },
         {
             "type": "lldb",
             "request": "launch",
