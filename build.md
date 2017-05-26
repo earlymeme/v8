@@ -31,7 +31,7 @@ out.gn/x64.debug/unittests --random-seed=-1055853278 --gtest_filter=ValueSeriali
 
 gdb --args out.gn/x64.debug/v8_hello_world
 
-lldb -- out.gn/x64.debug/v8_sample_process samples/count-hosts.js 
+lldb -- out.gn/x64.debug/v8_sample_process samples/count-hosts.js
 ```
 
 ### Update v8
