@@ -269,6 +269,7 @@ inline T AddressFrom(intptr_t x) {
 
 
 // Return the largest multiple of m which is <= x.
+// 小于等于x的m的最大倍数;m是2的幂，这里是0x0000000000001000，x=0x000000000007d9f0，做与运算就是清除低3位（16进制）：0x000000000007d000
 template <typename T>
 inline T RoundDown(T x, intptr_t m) {
   DCHECK(IS_POWER_OF_TWO(m));
@@ -277,6 +278,7 @@ inline T RoundDown(T x, intptr_t m) {
 
 
 // Return the smallest multiple of m which is >= x.
+// 大于等于x的m的最小倍数
 template <typename T>
 inline T RoundUp(T x, intptr_t m) {
   return RoundDown<T>(static_cast<T>(x + m - 1), m);
