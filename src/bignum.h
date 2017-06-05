@@ -10,6 +10,7 @@
 namespace v8 {
 namespace internal {
 
+// 很大的数
 class Bignum {
  public:
   // 3584 = 128 * 28. We can represent 2^3584 > 10^1000 accurately.
@@ -38,7 +39,7 @@ class Bignum {
   void MultiplyByUInt32(uint32_t factor);
   void MultiplyByUInt64(uint64_t factor);
   void MultiplyByPowerOfTen(int exponent);
-  void Times10() { return MultiplyByUInt32(10); }
+  void Times10() { return MultiplyByUInt32(10); } // 10倍
   // Pseudocode:
   //  int result = this / other;
   //  this = this % other;

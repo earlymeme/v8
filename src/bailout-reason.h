@@ -9,6 +9,7 @@ namespace v8 {
 namespace internal {
 
 // TODO(svenpanne) introduce an AbortReason and partition this list
+// 引起性能爆炸的列表
 #define ERROR_MESSAGES_LIST(V)                                                 \
   V(kNoReason, "no reason")                                                    \
                                                                                \

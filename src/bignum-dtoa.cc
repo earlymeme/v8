@@ -26,6 +26,7 @@ static int NormalizedExponent(uint64_t significand, int exponent) {
 
 // Forward declarations:
 // Returns an estimation of k such that 10^(k-1) <= v < 10^k.
+// 前置声明，估算k，满足 10^(k-1) <= v < 10^k.
 static int EstimatePower(int exponent);
 // Computes v / 10^estimated_power exactly, as a ratio of two bignums, numerator
 // and denominator.
