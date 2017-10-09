@@ -29,7 +29,7 @@ master分支用于merge from upsteam/master
 
 ```
 git fetch upstream
-git co master
+git checkout master
 git merge upstream/master
 
 ```
