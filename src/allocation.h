@@ -58,6 +58,7 @@ void DeleteArray(T* array) {
 // The normal strdup functions use malloc.  These versions of StrDup
 // and StrNDup uses new and calls the FatalProcessOutOfMemory handler
 // if allocation fails.
+// 字符串副本
 V8_EXPORT_PRIVATE char* StrDup(const char* str);
 char* StrNDup(const char* str, int n);
 

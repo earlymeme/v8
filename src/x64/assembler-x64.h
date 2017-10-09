@@ -2003,6 +2003,7 @@ class Assembler : public AssemblerBase {
 
   // Writes a single word of data in the code stream.
   // Used for inline tables, e.g., jump-tables.
+  // 写入单字
   void db(uint8_t data);
   void dd(uint32_t data);
   void dq(uint64_t data);
@@ -2012,6 +2013,7 @@ class Assembler : public AssemblerBase {
   // Check if there is less than kGap bytes available in the buffer.
   // If this is the case, we need to grow the buffer before emitting
   // an instruction or relocation information.
+  // 溢出没
   inline bool buffer_overflow() const {
     return pc_ >= reloc_info_writer.pos() - kGap;
   }
@@ -2046,7 +2048,8 @@ class Assembler : public AssemblerBase {
 
   // code emission
   void GrowBuffer();
-
+  
+  // 程序计数器+1，指向x指针指向的位置;下一个程序执行x指向的位置
   void emit(byte x) { *pc_++ = x; }
   inline void emitl(uint32_t x);
   inline void emitp(void* x, RelocInfo::Mode rmode);

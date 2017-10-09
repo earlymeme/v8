@@ -218,6 +218,7 @@ class MaybeHandle final {
   }
 
   // Convert to a Handle with a type that can be upcasted to.
+  // 转换成Handle类型
   template <typename S>
   V8_INLINE bool ToHandle(Handle<S>* out) const {
     if (location_ == nullptr) {

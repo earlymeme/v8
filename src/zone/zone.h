@@ -51,10 +51,12 @@ class V8_EXPORT_PRIVATE Zone final {
   }
 
   // Seals the zone to prevent any further allocation.
+  // 阻止分配内存
   void Seal() { sealed_ = true; }
 
   // Returns true if more memory has been allocated in zones than
   // the limit allows.
+  // 内存分配超出限制
   bool excess_allocation() const {
     return segment_bytes_allocated_ > kExcessLimit;
   }
@@ -82,6 +84,7 @@ class V8_EXPORT_PRIVATE Zone final {
   void DeleteAll();
 
   // The number of bytes allocated in this zone so far.
+  // 分配了的字节
   size_t allocation_size_;
 
   // The number of bytes allocated in segments.  Note that this number
@@ -93,6 +96,7 @@ class V8_EXPORT_PRIVATE Zone final {
   // the bytes. Returns the address of the newly allocated chunk of
   // memory in the Zone. Should only be called if there isn't enough
   // room in the Zone already.
+  // 扩展size字节的内存
   Address NewExpand(size_t size);
 
   // Creates a new segment, sets it size, and pushes it to the front

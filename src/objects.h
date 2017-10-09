@@ -6587,7 +6587,7 @@ class JSRegExp: public JSObject {
   // Meaning of Type:
   // NOT_COMPILED: Initial value. No data has been stored in the JSRegExp yet.
   // ATOM: A simple string to match against using an indexOf operation.
-  // IRREGEXP: Compiled with Irregexp.
+  // IRREGEXP: Compiled with Irregexp.  编译后的正则类型，用于优化，比如/Sun|Mon/，他们有个共同的n，这样我们先找n然后再找前面的2个字符，相当于一次匹配4个字符
   enum Type { NOT_COMPILED, ATOM, IRREGEXP };
   enum Flag {
     kNone = 0,

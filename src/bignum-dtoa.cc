@@ -14,8 +14,12 @@
 namespace v8 {
 namespace internal {
 
+// 浮点数阶码的规格化
+// significand 有效值（以前叫尾数）
+// exponent 阶E
 static int NormalizedExponent(uint64_t significand, int exponent) {
   DCHECK(significand != 0);
+  // kHiddenBit第56位为1，就是阶码最低位为1
   while ((significand & Double::kHiddenBit) == 0) {
     significand = significand << 1;
     exponent = exponent - 1;
@@ -26,6 +30,7 @@ static int NormalizedExponent(uint64_t significand, int exponent) {
 
 // Forward declarations:
 // Returns an estimation of k such that 10^(k-1) <= v < 10^k.
+// 前置声明，估算k，满足10^(k-1) <= v < 10^k.
 static int EstimatePower(int exponent);
 // Computes v / 10^estimated_power exactly, as a ratio of two bignums, numerator
 // and denominator.

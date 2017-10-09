@@ -104,6 +104,7 @@ struct Tests {
   }
 
   void IsSomeType() {
+    printf("IsSomeType");
     for (TypeIterator it = T.types.begin(); it != T.types.end(); ++it) {
       Type* t = *it;
       CHECK(1 ==

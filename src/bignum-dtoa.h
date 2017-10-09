@@ -14,6 +14,7 @@ enum BignumDtoaMode {
   // Return the shortest correct representation.
   // For example the output of 0.299999999999999988897 is (the less accurate but
   // correct) 0.3.
+  // 近视值
   BIGNUM_DTOA_SHORTEST,
   // Return a fixed number of digits after the decimal point.
   // For instance fixed(0.1, 4) becomes 0.1000

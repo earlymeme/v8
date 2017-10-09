@@ -15431,7 +15431,7 @@ bool JSObject::WouldConvertToSlowElements(uint32_t index) {
   return false;
 }
 
-
+// 匹配的类型
 static ElementsKind BestFittingFastElementsKind(JSObject* object) {
   if (object->HasSloppyArgumentsElements()) {
     return FAST_SLOPPY_ARGUMENTS_ELEMENTS;

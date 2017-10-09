@@ -249,7 +249,7 @@ void RegExpMacroAssemblerTracer::CheckNotAtStart(int cp_offset,
   assembler_->CheckNotAtStart(cp_offset, on_not_at_start);
 }
 
-
+// 检查不是一个字符
 void RegExpMacroAssemblerTracer::CheckNotCharacter(unsigned c,
                                                    Label* on_not_equal) {
   PrintablePrinter printable(c);

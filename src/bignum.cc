@@ -664,7 +664,7 @@ void Bignum::Zero() {
   exponent_ = 0;
 }
 
-
+// 对齐位，没看懂？
 void Bignum::Align(const Bignum& other) {
   if (exponent_ > other.exponent_) {
     // If "X" represents a "hidden" digit (by the exponent) then we are in the

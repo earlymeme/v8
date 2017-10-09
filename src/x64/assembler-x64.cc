@@ -339,7 +339,7 @@ void Assembler::CodeTargetAlign() {
   Align(16);  // Preferred alignment of jump targets on x64.
 }
 
-
+// no operation
 bool Assembler::IsNop(Address addr) {
   Address a = addr;
   while (*a == 0x66) a++;
@@ -458,7 +458,8 @@ void Assembler::GrowBuffer() {
   DCHECK(!buffer_overflow());
 }
 
-
+// code 操作码
+// adr 操作数的地址
 void Assembler::emit_operand(int code, const Operand& adr) {
   DCHECK(is_uint3(code));
   const unsigned length = adr.len_;
@@ -1767,7 +1768,7 @@ void Assembler::emit_neg(Register dst, int size) {
   emit_modrm(0x3, dst);
 }
 
-
+// 取反
 void Assembler::emit_neg(const Operand& dst, int size) {
   EnsureSpace ensure_space(this);
   emit_rex_64(dst);
@@ -1789,7 +1790,7 @@ void Assembler::emit_not(Register dst, int size) {
   emit_modrm(0x2, dst);
 }
 
-
+// 非运算
 void Assembler::emit_not(const Operand& dst, int size) {
   EnsureSpace ensure_space(this);
   emit_rex(dst, size);
@@ -1797,7 +1798,8 @@ void Assembler::emit_not(const Operand& dst, int size) {
   emit_operand(2, dst);
 }
 
-
+// no operation
+// inter x86的操作码是0x66 0x90
 void Assembler::Nop(int n) {
   // The recommended muti-byte sequences of NOP instructions from the Intel 64
   // and IA-32 Architectures Software Developer's Manual.

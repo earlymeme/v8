@@ -29,6 +29,7 @@ TEST(ArrayList) {
       ArrayList::cast(isolate->heap()->empty_fixed_array()));
   CHECK_EQ(0, array->Length());
   array = ArrayList::Add(array, handle(Smi::FromInt(100), isolate));
+  array->Print();
   CHECK_EQ(1, array->Length());
   CHECK_EQ(100, Smi::cast(array->Get(0))->value());
   array = ArrayList::Add(array, handle(Smi::FromInt(200), isolate),

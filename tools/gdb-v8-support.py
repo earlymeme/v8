@@ -123,6 +123,7 @@ class V8ValuePrinter(object):
 
 def v8_pretty_printers(val):
   lookup_tag = val.type.tag
+  print(lookup_tag)
   if lookup_tag == None:
     return None
   elif lookup_tag == 'v8value':
@@ -148,6 +149,7 @@ def v8_get_value(vstring):
 class V8PrintObject (gdb.Command):
   """Prints a v8 object."""
   def __init__ (self):
+    print('V8PrintObject')
     super (V8PrintObject, self).__init__ ("v8print", gdb.COMMAND_DATA)
   def invoke (self, arg, from_tty):
     v = v8_get_value(arg)
@@ -160,6 +162,7 @@ class FindAnywhere (gdb.Command):
   MAPPING_RE = re.compile(r"^\s*\[\d+\]\s+0x([0-9A-Fa-f]+)->0x([0-9A-Fa-f]+)")
   LIVE_MAPPING_RE = re.compile(r"^\s+0x([0-9A-Fa-f]+)\s+0x([0-9A-Fa-f]+)")
   def __init__ (self):
+    print('FindAnywhere')
     super (FindAnywhere, self).__init__ ("find-anywhere", gdb.COMMAND_DATA)
   def find (self, startAddr, endAddr, value):
     try:

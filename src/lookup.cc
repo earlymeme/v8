@@ -591,7 +591,7 @@ bool LookupIterator::HolderIsReceiverOrHiddenPrototype() const {
   return false;
 }
 
-
+// 返回对象的value值，比如Object.defineProperty(obj, 'key', {enumerable: true,configurable: false,writable: false,value: 'static'});得到的是value值static
 Handle<Object> LookupIterator::FetchValue() const {
   Object* result = NULL;
   if (IsElement()) {
@@ -726,6 +726,8 @@ Handle<Object> LookupIterator::GetAccessors() const {
 Handle<Object> LookupIterator::GetDataValue() const {
   DCHECK_EQ(DATA, state_);
   Handle<Object> value = FetchValue();
+  printf("lookup.cc:730line");
+  value->Print();
   return value;
 }
 

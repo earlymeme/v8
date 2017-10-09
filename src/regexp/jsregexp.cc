@@ -162,6 +162,8 @@ MaybeHandle<Object> RegExpImpl::Compile(Handle<JSRegExp> re,
   if (parse_result.simple && !(flags & JSRegExp::kIgnoreCase) &&
       !(flags & JSRegExp::kSticky) && !HasFewDifferentCharacters(pattern)) {
     // Parse-tree is a single atom that is equal to the pattern.
+    printf("AtomCompile\n");
+    pattern->Print();
     AtomCompile(re, pattern, flags, pattern);
     has_been_compiled = true;
   } else if (parse_result.tree->IsAtom() && !(flags & JSRegExp::kIgnoreCase) &&
@@ -244,6 +246,7 @@ int RegExpImpl::AtomExecRaw(Handle<JSRegExp> regexp,
   DisallowHeapAllocation no_gc;  // ensure vectors stay valid
 
   String* needle = String::cast(regexp->DataAt(JSRegExp::kAtomPatternIndex));
+  needle->Print();
   int needle_len = needle->length();
   DCHECK(needle->IsFlat());
   DCHECK_LT(0, needle_len);
@@ -286,6 +289,9 @@ Handle<Object> RegExpImpl::AtomExec(Handle<JSRegExp> re, Handle<String> subject,
                                     Handle<RegExpMatchInfo> last_match_info) {
   Isolate* isolate = re->GetIsolate();
 
+  printf("RegExpImpl::AtomExec\n");
+  re->Print();
+  subject->Print();
   static const int kNumRegisters = 2;
   STATIC_ASSERT(kNumRegisters <= Isolate::kJSRegexpStaticOffsetsVectorSize);
   int32_t* output_registers = isolate->jsregexp_static_offsets_vector();
@@ -566,7 +572,8 @@ MaybeHandle<Object> RegExpImpl::IrregexpExec(
   DCHECK_EQ(regexp->TypeTag(), JSRegExp::IRREGEXP);
 
   subject = String::Flatten(subject);
-
+  printf("subject print RegExpImpl::IrregexpExec\n");
+  subject->Print();
   // Prepare space for the return values.
 #if defined(V8_INTERPRETED_REGEXP) && defined(DEBUG)
   if (FLAG_trace_regexp_bytecodes) {

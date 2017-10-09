@@ -1218,6 +1218,7 @@ class InterpretedFrame : public JavaScriptFrame {
   void PatchBytecodeArray(BytecodeArray* bytecode_array);
 
   // Access to the interpreter register file for this frame.
+  // 访问当前帧的解释器寄存器文件
   Object* ReadInterpreterRegister(int register_index) const;
   void WriteInterpreterRegister(int register_index, Object* value);
 

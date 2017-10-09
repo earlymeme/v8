@@ -24,7 +24,7 @@ namespace internal {
 // It proceeds with the subtrees only if these two methods return true.
 // Sub-classes may override VisitNode and VisitExpressions, whose implementation
 // is dummy here.  Or they may override the specific Visit* methods.
-
+// 遍历AST
 template <class Subclass>
 class AstTraversalVisitor : public AstVisitor<Subclass> {
  public:

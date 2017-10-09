@@ -22,6 +22,10 @@
         "__hash_table": "cpp",
         "any": "cpp",
         "ios": "cpp",
-        "string": "cpp"
+        "string": "cpp",
+        "array": "cpp",
+        "initializer_list": "cpp",
+        "__bit_reference": "cpp",
+        "valarray": "cpp"
     }
 }

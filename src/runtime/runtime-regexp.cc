@@ -940,6 +940,7 @@ RUNTIME_FUNCTION(Runtime_RegExpExec) {
   // length of a string, i.e. it is always a Smi.  We check anyway for security.
   CHECK(index >= 0);
   CHECK(index <= subject->length());
+  printf("subject->length: %d\n", subject->length());
   isolate->counters()->regexp_entry_runtime()->Increment();
   RETURN_RESULT_OR_FAILURE(
       isolate, RegExpImpl::Exec(regexp, subject, index, last_match_info));

@@ -114,12 +114,14 @@ static void TraceInterpreter(const byte* code_base,
 
 
 static int32_t Load32Aligned(const byte* pc) {
+  // 检查最后2位是0
   DCHECK((reinterpret_cast<intptr_t>(pc) & 3) == 0);
   return *reinterpret_cast<const int32_t *>(pc);
 }
 
 
 static int32_t Load16Aligned(const byte* pc) {
+  // 检查最后一位是0
   DCHECK((reinterpret_cast<intptr_t>(pc) & 1) == 0);
   return *reinterpret_cast<const uint16_t *>(pc);
 }
