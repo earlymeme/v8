@@ -244,8 +244,7 @@ void ArmDebugger::Debug() {
               value = GetRegisterValue(i);
               PrintF(
                   "%3s: 0x%08x %10d",
-                  RegisterConfiguration::Crankshaft()->GetGeneralRegisterName(
-                      i),
+                  RegisterConfiguration::Default()->GetGeneralRegisterName(i),
                   value, value);
               if ((argc == 3 && strcmp(arg2, "fp") == 0) &&
                   i < 8 &&
@@ -1714,10 +1713,6 @@ typedef int64_t (*SimulatorRuntimeCall)(int32_t arg0, int32_t arg1,
                                         int32_t arg6, int32_t arg7,
                                         int32_t arg8);
 
-typedef ObjectTriple (*SimulatorRuntimeTripleCall)(int32_t arg0, int32_t arg1,
-                                                   int32_t arg2, int32_t arg3,
-                                                   int32_t arg4);
-
 // These prototypes handle the four types of FP calls.
 typedef int64_t (*SimulatorRuntimeCompareCall)(double darg0, double darg1);
 typedef double (*SimulatorRuntimeFPFPCall)(double darg0, double darg1);
@@ -1908,34 +1903,6 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
             reinterpret_cast<SimulatorRuntimeProfilingGetterCall>(
                 external);
         target(arg0, arg1, Redirection::ReverseRedirection(arg2));
-      } else if (redirection->type() ==
-                 ExternalReference::BUILTIN_CALL_TRIPLE) {
-        // builtin call returning ObjectTriple.
-        SimulatorRuntimeTripleCall target =
-            reinterpret_cast<SimulatorRuntimeTripleCall>(external);
-        if (::v8::internal::FLAG_trace_sim || !stack_aligned) {
-          PrintF(
-              "Call to host triple returning runtime function %p "
-              "args %08x, %08x, %08x, %08x, %08x",
-              static_cast<void*>(FUNCTION_ADDR(target)), arg1, arg2, arg3, arg4,
-              arg5);
-          if (!stack_aligned) {
-            PrintF(" with unaligned stack %08x\n", get_register(sp));
-          }
-          PrintF("\n");
-        }
-        CHECK(stack_aligned);
-        // arg0 is a hidden argument pointing to the return location, so don't
-        // pass it to the target function.
-        ObjectTriple result = target(arg1, arg2, arg3, arg4, arg5);
-        if (::v8::internal::FLAG_trace_sim) {
-          PrintF("Returned { %p, %p, %p }\n", static_cast<void*>(result.x),
-                 static_cast<void*>(result.y), static_cast<void*>(result.z));
-        }
-        // Return is passed back in address pointed to by hidden first argument.
-        ObjectTriple* sim_result = reinterpret_cast<ObjectTriple*>(arg0);
-        *sim_result = result;
-        set_register(r0, arg0);
       } else {
         // builtin call.
         DCHECK(redirection->type() == ExternalReference::BUILTIN_CALL ||
@@ -3225,7 +3192,6 @@ void Simulator::DecodeType7(Instruction* instr) {
 void Simulator::DecodeTypeVFP(Instruction* instr) {
   DCHECK((instr->TypeValue() == 7) && (instr->Bit(24) == 0x0) );
   DCHECK(instr->Bits(11, 9) == 0x5);
-
   // Obtain single precision register codes.
   int m = instr->VFPMRegValue(kSinglePrecision);
   int d = instr->VFPDRegValue(kSinglePrecision);
@@ -5221,7 +5187,7 @@ void Simulator::DecodeSpecialCondition(Instruction* instr) {
                 case Neon16: {
                   uint16_t src[8];
                   get_neon_register(Vm, src);
-                  for (int i = 0; i < 4; i++) {
+                  for (int i = 0; i < 2; i++) {
                     std::swap(src[i * 4], src[i * 4 + 3]);
                     std::swap(src[i * 4 + 1], src[i * 4 + 2]);
                   }
@@ -5834,7 +5800,7 @@ void Simulator::Execute() {
     }
   } else {
     // FLAG_stop_sim_at is at the non-default value. Stop in the debugger when
-    // we reach the particular instuction count.
+    // we reach the particular instruction count.
     while (program_counter != end_sim_pc) {
       Instruction* instr = reinterpret_cast<Instruction*>(program_counter);
       icount_++;

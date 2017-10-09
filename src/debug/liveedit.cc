@@ -163,7 +163,7 @@ class Differencer {
 
   // Each cell keeps a value plus direction. Value is multiplied by 4.
   void set_value4_and_dir(int i1, int i2, int value4, Direction dir) {
-    DCHECK((value4 & kDirectionMask) == 0);
+    DCHECK_EQ(0, value4 & kDirectionMask);
     get_cell(i1, i2) = value4 | dir;
   }
 
@@ -437,7 +437,7 @@ class LineEndsWrapper {
   int string_len_;
 
   int GetPosAfterNewLine(int index) {
-    return Smi::cast(ends_array_->get(index))->value() + 1;
+    return Smi::ToInt(ends_array_->get(index)) + 1;
   }
 };
 
@@ -603,7 +603,7 @@ static Handle<SharedFunctionInfo> UnwrapSharedFunctionInfoFromJSValue(
 static int GetArrayLength(Handle<JSArray> array) {
   Object* length = array->length();
   CHECK(length->IsSmi());
-  return Smi::cast(length)->value();
+  return Smi::ToInt(length);
 }
 
 void FunctionInfoWrapper::SetInitialProperties(Handle<String> name,
@@ -722,29 +722,6 @@ MaybeHandle<JSArray> LiveEdit::GatherCompileInfo(Handle<Script> script,
   }
 }
 
-// Finds all references to original and replaces them with substitution.
-static void ReplaceCodeObject(Handle<Code> original,
-                              Handle<Code> substitution) {
-  // Perform a full GC in order to ensure that we are not in the middle of an
-  // incremental marking phase when we are replacing the code object.
-  // Since we are not in an incremental marking phase we can write pointers
-  // to code objects (that are never in new space) without worrying about
-  // write barriers.
-  Heap* heap = original->GetHeap();
-  HeapIterator iterator(heap, HeapIterator::kFilterUnreachable);
-  // Now iterate over all pointers of all objects, including code_target
-  // implicit pointers.
-  for (HeapObject* obj = iterator.next(); obj != NULL; obj = iterator.next()) {
-    if (obj->IsJSFunction()) {
-      JSFunction* fun = JSFunction::cast(obj);
-      if (fun->code() == *original) fun->ReplaceCode(*substitution);
-    } else if (obj->IsSharedFunctionInfo()) {
-      SharedFunctionInfo* info = SharedFunctionInfo::cast(obj);
-      if (info->code() == *original) info->set_code(*substitution);
-    }
-  }
-}
-
 // Patch function feedback vector.
 // The feedback vector is a cache for complex object boilerplates and for a
 // native context. We must clean cached values, or if the structure of the
@@ -829,41 +806,6 @@ class FeedbackVectorFixer {
 };
 
 
-// Marks code that shares the same shared function info or has inlined
-// code that shares the same function info.
-class DependentFunctionMarker: public OptimizedFunctionVisitor {
- public:
-  SharedFunctionInfo* shared_info_;
-  bool found_;
-
-  explicit DependentFunctionMarker(SharedFunctionInfo* shared_info)
-    : shared_info_(shared_info), found_(false) { }
-
-  virtual void VisitFunction(JSFunction* function) {
-    // It should be guaranteed by the iterator that everything is optimized.
-    DCHECK(function->code()->kind() == Code::OPTIMIZED_FUNCTION);
-    if (function->Inlines(shared_info_)) {
-      // Mark the code for deoptimization.
-      function->code()->set_marked_for_deoptimization(true);
-      found_ = true;
-    }
-  }
-};
-
-
-static void DeoptimizeDependentFunctions(SharedFunctionInfo* function_info) {
-  DisallowHeapAllocation no_allocation;
-  DependentFunctionMarker marker(function_info);
-  // TODO(titzer): need to traverse all optimized code to find OSR code here.
-  Deoptimizer::VisitAllOptimizedFunctions(function_info->GetIsolate(), &marker);
-
-  if (marker.found_) {
-    // Only go through with the deoptimization if something was found.
-    Deoptimizer::DeoptimizeMarkedCode(function_info->GetIsolate());
-  }
-}
-
-
 void LiveEdit::ReplaceFunctionCode(
     Handle<JSArray> new_compile_info_array,
     Handle<JSArray> shared_info_array) {
@@ -885,34 +827,11 @@ void LiveEdit::ReplaceFunctionCode(
     // Clear old bytecode. This will trigger self-healing if we do not install
     // new bytecode.
     shared_info->ClearBytecodeArray();
-    if (!shared_info->HasBaselineCode()) {
-      // Every function from this SFI is interpreted.
-      if (!new_shared_info->HasBaselineCode()) {
-        // We have newly compiled bytecode. Simply replace the old one.
-        shared_info->set_bytecode_array(new_shared_info->bytecode_array());
-      } else {
-        // Rely on self-healing for places that used to run bytecode.
-        shared_info->ReplaceCode(*new_code);
-      }
-    } else {
-      // Functions from this SFI can be either interpreted or running FCG.
-      DCHECK(old_code->kind() == Code::FUNCTION);
-      if (new_shared_info->HasBytecodeArray()) {
-        // Start using new bytecode everywhere.
-        shared_info->set_bytecode_array(new_shared_info->bytecode_array());
-        ReplaceCodeObject(old_code,
-                          isolate->builtins()->InterpreterEntryTrampoline());
-      } else {
-        // Start using new FCG code everywhere.
-        // Rely on self-healing for places that used to run bytecode.
-        DCHECK(new_code->kind() == Code::FUNCTION);
-        ReplaceCodeObject(old_code, new_code);
-      }
-    }
+    shared_info->set_bytecode_array(new_shared_info->bytecode_array());
 
-    if (shared_info->HasDebugInfo()) {
+    if (shared_info->HasBreakInfo()) {
       // Existing break points will be re-applied. Reset the debug info here.
-      isolate->debug()->RemoveDebugInfoAndClearFromShared(
+      isolate->debug()->RemoveBreakInfoAndMaybeFree(
           handle(shared_info->GetDebugInfo()));
     }
     shared_info->set_scope_info(new_shared_info->scope_info());
@@ -935,8 +854,7 @@ void LiveEdit::ReplaceFunctionCode(
   FeedbackVectorFixer::PatchFeedbackVector(&compile_info_wrapper, shared_info,
                                            isolate);
 
-  DeoptimizeDependentFunctions(*shared_info);
-  isolate->compilation_cache()->Remove(shared_info);
+  isolate->debug()->DeoptimizeFunction(shared_info);
 }
 
 void LiveEdit::FunctionSourceUpdated(Handle<JSArray> shared_info_array,
@@ -945,8 +863,7 @@ void LiveEdit::FunctionSourceUpdated(Handle<JSArray> shared_info_array,
   Handle<SharedFunctionInfo> shared_info = shared_info_wrapper.GetInfo();
 
   shared_info->set_function_literal_id(new_function_literal_id);
-  DeoptimizeDependentFunctions(*shared_info);
-  shared_info_array->GetIsolate()->compilation_cache()->Remove(shared_info);
+  shared_info_array->GetIsolate()->debug()->DeoptimizeFunction(shared_info);
 }
 
 void LiveEdit::FixupScript(Handle<Script> script, int max_function_literal_id) {
@@ -1068,14 +985,9 @@ void LiveEdit::PatchFunctionPositions(Handle<JSArray> shared_info_array,
         Handle<AbstractCode>(AbstractCode::cast(info->bytecode_array())),
         position_change_array);
   }
-  if (info->code()->kind() == Code::FUNCTION) {
-    TranslateSourcePositionTable(
-        Handle<AbstractCode>(AbstractCode::cast(info->code())),
-        position_change_array);
-  }
-  if (info->HasDebugInfo()) {
+  if (info->HasBreakInfo()) {
     // Existing break points will be re-applied. Reset the debug info here.
-    info->GetIsolate()->debug()->RemoveDebugInfoAndClearFromShared(
+    info->GetIsolate()->debug()->RemoveBreakInfoAndMaybeFree(
         handle(info->GetDebugInfo()));
   }
 }
@@ -1172,7 +1084,9 @@ static bool CheckActivation(Handle<JSArray> shared_info_array,
     Handle<SharedFunctionInfo> shared =
         UnwrapSharedFunctionInfoFromJSValue(jsvalue);
 
-    if (function->Inlines(*shared)) {
+    if (function->shared() == *shared ||
+        (function->code()->is_optimized_code() &&
+         function->code()->Inlines(*shared))) {
       SetElementSloppy(result, i, Handle<Smi>(Smi::FromInt(status), isolate));
       return true;
     }
@@ -1243,8 +1157,7 @@ class MultipleFunctionTarget {
       Handle<Object> old_element =
           JSReceiver::GetElement(isolate, result_, i).ToHandleChecked();
       if (!old_element->IsSmi() ||
-          Smi::cast(*old_element)->value() ==
-              LiveEdit::FUNCTION_AVAILABLE_FOR_PATCH) {
+          Smi::ToInt(*old_element) == LiveEdit::FUNCTION_AVAILABLE_FOR_PATCH) {
         SetElementSloppy(result_, i,
                          Handle<Smi>(Smi::FromInt(status), isolate));
       }
@@ -1596,7 +1509,7 @@ void LiveEditFunctionTracker::VisitFunctionLiteral(FunctionLiteral* node) {
 void LiveEditFunctionTracker::FunctionStarted(FunctionLiteral* fun) {
   HandleScope handle_scope(isolate_);
   FunctionInfoWrapper info = FunctionInfoWrapper::Create(isolate_);
-  info.SetInitialProperties(fun->name(), fun->start_position(),
+  info.SetInitialProperties(fun->name(isolate_), fun->start_position(),
                             fun->end_position(), fun->parameter_count(),
                             current_parent_index_, fun->function_literal_id());
   current_parent_index_ = len_;

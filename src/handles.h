@@ -97,7 +97,7 @@ class Handle final : public HandleBase {
     static_assert(std::is_base_of<Object, T>::value, "static type violation");
   }
 
-  V8_INLINE explicit Handle(T* object) : Handle(object, object->GetIsolate()) {}
+  V8_INLINE explicit Handle(T* object);
   V8_INLINE Handle(T* object, Isolate* isolate);
 
   // Allocate a new handle for the object, do not canonicalize.
@@ -125,8 +125,13 @@ class Handle final : public HandleBase {
 
   template <typename S>
   static const Handle<T> cast(Handle<S> that) {
+<<<<<<< HEAD
     T::cast(*reinterpret_cast<T**>(that.location_));
     return Handle<T>(reinterpret_cast<T**>(that.location_)); // 调用T类型的静态方法cast
+=======
+    T::cast(*reinterpret_cast<T**>(that.location()));
+    return Handle<T>(reinterpret_cast<T**>(that.location_));
+>>>>>>> upstream/master
   }
 
   // TODO(yangguo): Values that contain empty handles should be declared as
@@ -185,7 +190,6 @@ template <typename T>
 class MaybeHandle final {
  public:
   V8_INLINE MaybeHandle() {}
-  V8_INLINE ~MaybeHandle() {}
 
   // Constructor for handling automatic up casting from Handle.
   // Ex. Handle<JSArray> can be passed when MaybeHandle<Object> is expected.

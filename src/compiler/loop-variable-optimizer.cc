@@ -129,7 +129,7 @@ class LoopVariableOptimizer::VariableLimits : public ZoneObject {
     // Then we go through both lists in lock-step until we find
     // the common tail.
     while (head_ != other_limit) {
-      DCHECK(limit_count_ > 0);
+      DCHECK_LT(0, limit_count_);
       limit_count_--;
       other_limit = other_limit->next();
       head_ = head_->next();
@@ -306,10 +306,12 @@ InductionVariable* LoopVariableOptimizer::TryGetInductionVariable(Node* phi) {
   Node* arith = phi->InputAt(1);
   InductionVariable::ArithmeticType arithmeticType;
   if (arith->opcode() == IrOpcode::kJSAdd ||
-      arith->opcode() == IrOpcode::kSpeculativeNumberAdd) {
+      arith->opcode() == IrOpcode::kSpeculativeNumberAdd ||
+      arith->opcode() == IrOpcode::kSpeculativeSafeIntegerAdd) {
     arithmeticType = InductionVariable::ArithmeticType::kAddition;
   } else if (arith->opcode() == IrOpcode::kJSSubtract ||
-             arith->opcode() == IrOpcode::kSpeculativeNumberSubtract) {
+             arith->opcode() == IrOpcode::kSpeculativeNumberSubtract ||
+             arith->opcode() == IrOpcode::kSpeculativeSafeIntegerSubtract) {
     arithmeticType = InductionVariable::ArithmeticType::kSubtraction;
   } else {
     return nullptr;
@@ -404,6 +406,8 @@ void LoopVariableOptimizer::ChangeToPhisAndInsertGuards() {
     }
   }
 }
+
+#undef TRACE
 
 }  // namespace compiler
 }  // namespace internal

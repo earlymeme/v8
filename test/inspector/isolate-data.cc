@@ -35,9 +35,22 @@ v8::Local<v8::String> ToString(v8::Isolate* isolate,
 
 void Print(v8::Isolate* isolate, const v8_inspector::StringView& string) {
   v8::Local<v8::String> v8_string = ToString(isolate, string);
-  v8::String::Utf8Value utf8_string(v8_string);
+  v8::String::Utf8Value utf8_string(isolate, v8_string);
   fwrite(*utf8_string, sizeof(**utf8_string), utf8_string.length(), stdout);
 }
+
+class Inspectable : public v8_inspector::V8InspectorSession::Inspectable {
+ public:
+  Inspectable(v8::Isolate* isolate, v8::Local<v8::Value> object)
+      : object_(isolate, object) {}
+  ~Inspectable() override {}
+  v8::Local<v8::Value> get(v8::Local<v8::Context> context) override {
+    return object_.Get(context->GetIsolate());
+  }
+
+ private:
+  v8::Global<v8::Value> object_;
+};
 
 }  //  namespace
 
@@ -54,8 +67,15 @@ IsolateData::IsolateData(TaskRunner* task_runner,
   isolate_->SetMicrotasksPolicy(v8::MicrotasksPolicy::kScoped);
   if (with_inspector) {
     isolate_->AddMessageListener(&IsolateData::MessageHandler);
+    isolate_->SetPromiseRejectCallback(&IsolateData::PromiseRejectHandler);
     inspector_ = v8_inspector::V8Inspector::create(isolate_, this);
   }
+  v8::HandleScope handle_scope(isolate_);
+  not_inspectable_private_.Reset(
+      isolate_, v8::Private::ForApi(isolate_, v8::String::NewFromUtf8(
+                                                  isolate_, "notInspectable",
+                                                  v8::NewStringType::kNormal)
+                                                  .ToLocalChecked()));
 }
 
 IsolateData* IsolateData::FromContext(v8::Local<v8::Context> context) {
@@ -100,8 +120,10 @@ void IsolateData::RegisterModule(v8::Local<v8::Context> context,
   v8::Local<v8::Module> module;
   if (!v8::ScriptCompiler::CompileModule(isolate(), source).ToLocal(&module))
     return;
-  if (!module->Instantiate(context, &IsolateData::ModuleResolveCallback))
+  if (!module->InstantiateModule(context, &IsolateData::ModuleResolveCallback)
+           .FromMaybe(false)) {
     return;
+  }
   v8::Local<v8::Value> result;
   if (!module->Evaluate(context).ToLocal(&result)) return;
   modules_[name] = v8::Global<v8::Module>(isolate_, module);
@@ -111,8 +133,8 @@ void IsolateData::RegisterModule(v8::Local<v8::Context> context,
 v8::MaybeLocal<v8::Module> IsolateData::ModuleResolveCallback(
     v8::Local<v8::Context> context, v8::Local<v8::String> specifier,
     v8::Local<v8::Module> referrer) {
-  std::string str = *v8::String::Utf8Value(specifier);
   IsolateData* data = IsolateData::FromContext(context);
+  std::string str = *v8::String::Utf8Value(data->isolate_, specifier);
   return data->modules_[ToVector(specifier)].Get(data->isolate_);
 }
 
@@ -180,6 +202,14 @@ void IsolateData::AsyncTaskFinished(void* task) {
   inspector_->asyncTaskFinished(task);
 }
 
+void IsolateData::AddInspectedObject(int session_id,
+                                     v8::Local<v8::Value> object) {
+  auto it = sessions_.find(session_id);
+  if (it == sessions_.end()) return;
+  std::unique_ptr<Inspectable> inspectable(new Inspectable(isolate_, object));
+  it->second->addInspectedObject(std::move(inspectable));
+}
+
 void IsolateData::SetMaxAsyncTaskStacksForTest(int limit) {
   v8_inspector::SetMaxAsyncTaskStacksForTest(inspector_.get(), limit);
 }
@@ -189,11 +219,11 @@ void IsolateData::DumpAsyncTaskStacksStateForTest() {
 }
 
 // static
-void IsolateData::MessageHandler(v8::Local<v8::Message> message,
-                                 v8::Local<v8::Value> exception) {
+int IsolateData::HandleMessage(v8::Local<v8::Message> message,
+                               v8::Local<v8::Value> exception) {
   v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::Context> context = isolate->GetEnteredContext();
-  if (context.IsEmpty()) return;
+  if (context.IsEmpty()) return 0;
   v8_inspector::V8Inspector* inspector =
       IsolateData::FromContext(context)->inspector_.get();
 
@@ -220,9 +250,51 @@ void IsolateData::MessageHandler(v8::Local<v8::Message> message,
   }
   v8_inspector::StringView url(url_string.start(), url_string.length());
 
-  inspector->exceptionThrown(context, message_text, exception, detailed_message,
-                             url, line_number, column_number,
-                             inspector->createStackTrace(stack), script_id);
+  return inspector->exceptionThrown(
+      context, message_text, exception, detailed_message, url, line_number,
+      column_number, inspector->createStackTrace(stack), script_id);
+}
+
+// static
+void IsolateData::MessageHandler(v8::Local<v8::Message> message,
+                                 v8::Local<v8::Value> exception) {
+  HandleMessage(message, exception);
+}
+
+// static
+void IsolateData::PromiseRejectHandler(v8::PromiseRejectMessage data) {
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::Local<v8::Context> context = isolate->GetEnteredContext();
+  if (context.IsEmpty()) return;
+  v8::Local<v8::Promise> promise = data.GetPromise();
+  v8::Local<v8::Private> id_private = v8::Private::ForApi(
+      isolate,
+      v8::String::NewFromUtf8(isolate, "id", v8::NewStringType::kNormal)
+          .ToLocalChecked());
+
+  if (data.GetEvent() == v8::kPromiseHandlerAddedAfterReject) {
+    v8::Local<v8::Value> id;
+    if (!promise->GetPrivate(context, id_private).ToLocal(&id)) return;
+    if (!id->IsInt32()) return;
+    v8_inspector::V8Inspector* inspector =
+        IsolateData::FromContext(context)->inspector_.get();
+    const char* reason_str = "Handler added to rejected promise";
+    inspector->exceptionRevoked(
+        context, id.As<v8::Int32>()->Value(),
+        v8_inspector::StringView(reinterpret_cast<const uint8_t*>(reason_str),
+                                 strlen(reason_str)));
+    return;
+  }
+
+  v8::Local<v8::Value> exception = data.GetValue();
+  int exception_id = HandleMessage(
+      v8::Exception::CreateMessage(isolate, exception), exception);
+  if (exception_id) {
+    promise
+        ->SetPrivate(isolate->GetCurrentContext(), id_private,
+                     v8::Int32::New(isolate, exception_id))
+        .ToChecked();
+  }
 }
 
 void IsolateData::FireContextCreated(v8::Local<v8::Context> context,
@@ -235,6 +307,13 @@ void IsolateData::FireContextCreated(v8::Local<v8::Context> context,
 
 void IsolateData::FireContextDestroyed(v8::Local<v8::Context> context) {
   inspector_->contextDestroyed(context);
+}
+
+void IsolateData::FreeContext(v8::Local<v8::Context> context) {
+  int context_group_id = GetContextGroupId(context);
+  auto it = contexts_.find(context_group_id);
+  if (it == contexts_.end()) return;
+  contexts_.erase(it);
 }
 
 std::vector<int> IsolateData::GetSessionIds(int context_group_id) {
@@ -259,6 +338,15 @@ bool IsolateData::formatAccessorsAsProperties(v8::Local<v8::Value> object) {
       .FromMaybe(false);
 }
 
+bool IsolateData::isInspectableHeapObject(v8::Local<v8::Object> object) {
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::MicrotasksScope microtasks_scope(
+      isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
+  return !object->HasPrivate(context, not_inspectable_private_.Get(isolate))
+              .FromMaybe(false);
+}
+
 v8::Local<v8::Context> IsolateData::ensureDefaultContextInGroup(
     int context_group_id) {
   return GetContext(context_group_id);
@@ -271,7 +359,7 @@ void IsolateData::SetCurrentTimeMS(double time) {
 
 double IsolateData::currentTimeMS() {
   if (current_time_set_) return current_time_;
-  return v8::base::OS::TimeCurrentMillis();
+  return v8::internal::V8::GetCurrentPlatform()->CurrentClockTimeMillis();
 }
 
 void IsolateData::SetMemoryInfo(v8::Local<v8::Value> memory_info) {

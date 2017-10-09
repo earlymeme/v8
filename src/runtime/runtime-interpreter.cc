@@ -15,7 +15,6 @@
 #include "src/interpreter/bytecodes.h"
 #include "src/isolate-inl.h"
 #include "src/ostreams.h"
-#include "src/string-builder.h"
 
 namespace v8 {
 namespace internal {
@@ -33,23 +32,6 @@ RUNTIME_FUNCTION(Runtime_InterpreterNewClosure) {
   return *isolate->factory()->NewFunctionFromSharedFunctionInfo(
       shared, context, vector_cell,
       static_cast<PretenureFlag>(pretenured_flag));
-}
-
-RUNTIME_FUNCTION(Runtime_InterpreterStringConcat) {
-  HandleScope scope(isolate);
-  DCHECK_LE(2, args.length());
-  int const argc = args.length();
-  ScopedVector<Handle<Object>> argv(argc);
-
-  isolate->counters()->string_add_runtime()->Increment();
-  IncrementalStringBuilder builder(isolate);
-  for (int i = 0; i < argc; ++i) {
-    Handle<String> str = Handle<String>::cast(args.at(i));
-    if (str->length() != 0) {
-      builder.AppendString(str);
-    }
-  }
-  RETURN_RESULT_OR_FAILURE(isolate, builder.Finish());
 }
 
 #ifdef V8_TRACE_IGNITION
@@ -190,20 +172,6 @@ RUNTIME_FUNCTION(Runtime_InterpreterTraceBytecodeExit) {
 }
 
 #endif
-
-RUNTIME_FUNCTION(Runtime_InterpreterAdvanceBytecodeOffset) {
-  SealHandleScope shs(isolate);
-  DCHECK_EQ(2, args.length());
-  CONVERT_ARG_HANDLE_CHECKED(BytecodeArray, bytecode_array, 0);
-  CONVERT_SMI_ARG_CHECKED(bytecode_offset, 1);
-  interpreter::BytecodeArrayIterator it(bytecode_array);
-  int offset = bytecode_offset - BytecodeArray::kHeaderSize + kHeapObjectTag;
-  while (it.current_offset() < offset) it.Advance();
-  DCHECK_EQ(offset, it.current_offset());
-  it.Advance();  // Advance by one bytecode.
-  offset = it.current_offset() + BytecodeArray::kHeaderSize - kHeapObjectTag;
-  return Smi::FromInt(offset);
-}
 
 }  // namespace internal
 }  // namespace v8

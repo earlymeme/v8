@@ -10,7 +10,7 @@
 #include "src/code-factory.h"
 #include "src/compiler/machine-operator.h"
 #include "src/compiler/node-matchers.h"
-#include "src/objects-inl.h"
+#include "src/factory-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -172,18 +172,18 @@ Node* RepresentationChanger::GetRepresentationFor(
       return GetTaggedPointerRepresentationFor(node, output_rep, output_type,
                                                use_node, use_info);
     case MachineRepresentation::kTagged:
-      DCHECK(use_info.type_check() == TypeCheckKind::kNone);
+      DCHECK_EQ(TypeCheckKind::kNone, use_info.type_check());
       return GetTaggedRepresentationFor(node, output_rep, output_type,
                                         use_info.truncation());
     case MachineRepresentation::kFloat32:
-      DCHECK(use_info.type_check() == TypeCheckKind::kNone);
+      DCHECK_EQ(TypeCheckKind::kNone, use_info.type_check());
       return GetFloat32RepresentationFor(node, output_rep, output_type,
                                          use_info.truncation());
     case MachineRepresentation::kFloat64:
       return GetFloat64RepresentationFor(node, output_rep, output_type,
                                          use_node, use_info);
     case MachineRepresentation::kBit:
-      DCHECK(use_info.type_check() == TypeCheckKind::kNone);
+      DCHECK_EQ(TypeCheckKind::kNone, use_info.type_check());
       return GetBitRepresentationFor(node, output_rep, output_type);
     case MachineRepresentation::kWord8:
     case MachineRepresentation::kWord16:
@@ -191,12 +191,9 @@ Node* RepresentationChanger::GetRepresentationFor(
       return GetWord32RepresentationFor(node, output_rep, output_type, use_node,
                                         use_info);
     case MachineRepresentation::kWord64:
-      DCHECK(use_info.type_check() == TypeCheckKind::kNone);
+      DCHECK_EQ(TypeCheckKind::kNone, use_info.type_check());
       return GetWord64RepresentationFor(node, output_rep, output_type);
     case MachineRepresentation::kSimd128:
-    case MachineRepresentation::kSimd1x4:
-    case MachineRepresentation::kSimd1x8:
-    case MachineRepresentation::kSimd1x16:
     case MachineRepresentation::kNone:
       return node;
   }
@@ -220,8 +217,7 @@ Node* RepresentationChanger::GetTaggedSignedRepresentationFor(
   const Operator* op;
   if (output_type->Is(Type::None())) {
     // This is an impossible value; it should not be used at runtime.
-    // We just provide a dummy value here.
-    return jsgraph()->Constant(0);
+    return jsgraph()->DeadValue();
   } else if (IsWord(output_rep)) {
     if (output_type->Is(Type::Signed31())) {
       op = simplified()->ChangeInt31ToTaggedSigned();
@@ -339,8 +335,7 @@ Node* RepresentationChanger::GetTaggedPointerRepresentationFor(
   Operator const* op;
   if (output_type->Is(Type::None())) {
     // This is an impossible value; it should not be used at runtime.
-    // We just provide a dummy value here.
-    return jsgraph()->TheHoleConstant();
+    return jsgraph()->DeadValue();
   } else if (output_rep == MachineRepresentation::kBit) {
     if (output_type->Is(Type::Boolean())) {
       op = simplified()->ChangeBitToTagged();
@@ -417,8 +412,7 @@ Node* RepresentationChanger::GetTaggedRepresentationFor(
   const Operator* op;
   if (output_type->Is(Type::None())) {
     // This is an impossible value; it should not be used at runtime.
-    // We just provide a dummy value here.
-    return jsgraph()->TheHoleConstant();
+    return jsgraph()->DeadValue();
   } else if (output_rep == MachineRepresentation::kBit) {
     if (output_type->Is(Type::Boolean())) {
       op = simplified()->ChangeBitToTagged();
@@ -496,8 +490,7 @@ Node* RepresentationChanger::GetFloat32RepresentationFor(
   const Operator* op = nullptr;
   if (output_type->Is(Type::None())) {
     // This is an impossible value; it should not be used at runtime.
-    // We just provide a dummy value here.
-    return jsgraph()->Float32Constant(0.0f);
+    return jsgraph()->DeadValue();
   } else if (IsWord(output_rep)) {
     if (output_type->Is(Type::Signed32())) {
       // int32 -> float64 -> float32
@@ -557,8 +550,7 @@ Node* RepresentationChanger::GetFloat64RepresentationFor(
   const Operator* op = nullptr;
   if (output_type->Is(Type::None())) {
     // This is an impossible value; it should not be used at runtime.
-    // We just provide a dummy value here.
-    return jsgraph()->Float64Constant(0.0);
+    return jsgraph()->DeadValue();
   } else if (IsWord(output_rep)) {
     if (output_type->Is(Type::Signed32())) {
       op = machine()->ChangeInt32ToFloat64();
@@ -635,8 +627,7 @@ Node* RepresentationChanger::GetWord32RepresentationFor(
   const Operator* op = nullptr;
   if (output_type->Is(Type::None())) {
     // This is an impossible value; it should not be used at runtime.
-    // We just provide a dummy value here.
-    return jsgraph()->Int32Constant(0);
+    return jsgraph()->DeadValue();
   } else if (output_rep == MachineRepresentation::kBit) {
     return node;  // Sloppy comparison -> word32
   } else if (output_rep == MachineRepresentation::kFloat64) {
@@ -674,22 +665,11 @@ Node* RepresentationChanger::GetWord32RepresentationFor(
       return TypeError(node, output_rep, output_type,
                        MachineRepresentation::kWord32);
     }
-  } else if (output_rep == MachineRepresentation::kTaggedSigned) {
-    if (output_type->Is(Type::Signed32())) {
+  } else if (IsAnyTagged(output_rep)) {
+    if (output_rep == MachineRepresentation::kTaggedSigned &&
+        output_type->Is(Type::SignedSmall())) {
       op = simplified()->ChangeTaggedSignedToInt32();
-    } else if (use_info.truncation().IsUsedAsWord32()) {
-      if (use_info.type_check() != TypeCheckKind::kNone) {
-        op = simplified()->CheckedTruncateTaggedToWord32();
-      } else {
-        op = simplified()->TruncateTaggedToWord32();
-      }
-    } else {
-      return TypeError(node, output_rep, output_type,
-                       MachineRepresentation::kWord32);
-    }
-  } else if (output_rep == MachineRepresentation::kTagged ||
-             output_rep == MachineRepresentation::kTaggedPointer) {
-    if (output_type->Is(Type::Signed32())) {
+    } else if (output_type->Is(Type::Signed32())) {
       op = simplified()->ChangeTaggedToInt32();
     } else if (use_info.type_check() == TypeCheckKind::kSignedSmall) {
       op = simplified()->CheckedTaggedSignedToInt32();
@@ -703,8 +683,12 @@ Node* RepresentationChanger::GetWord32RepresentationFor(
     } else if (use_info.truncation().IsUsedAsWord32()) {
       if (output_type->Is(Type::NumberOrOddball())) {
         op = simplified()->TruncateTaggedToWord32();
-      } else if (use_info.type_check() != TypeCheckKind::kNone) {
-        op = simplified()->CheckedTruncateTaggedToWord32();
+      } else if (use_info.type_check() == TypeCheckKind::kNumber) {
+        op = simplified()->CheckedTruncateTaggedToWord32(
+            CheckTaggedInputMode::kNumber);
+      } else if (use_info.type_check() == TypeCheckKind::kNumberOrOddball) {
+        op = simplified()->CheckedTruncateTaggedToWord32(
+            CheckTaggedInputMode::kNumberOrOddball);
       } else {
         return TypeError(node, output_rep, output_type,
                          MachineRepresentation::kWord32);
@@ -726,13 +710,13 @@ Node* RepresentationChanger::GetWord32RepresentationFor(
         return TypeError(node, output_rep, output_type,
                          MachineRepresentation::kWord32);
       }
-    } else {
-      DCHECK_EQ(TypeCheckKind::kNumberOrOddball, use_info.type_check());
+    } else if (use_info.type_check() == TypeCheckKind::kNumber ||
+               use_info.type_check() == TypeCheckKind::kNumberOrOddball) {
       return node;
     }
   } else if (output_rep == MachineRepresentation::kWord8 ||
              output_rep == MachineRepresentation::kWord16) {
-    DCHECK(use_info.representation() == MachineRepresentation::kWord32);
+    DCHECK_EQ(MachineRepresentation::kWord32, use_info.representation());
     DCHECK(use_info.type_check() == TypeCheckKind::kSignedSmall ||
            use_info.type_check() == TypeCheckKind::kSigned32);
     return node;
@@ -779,8 +763,7 @@ Node* RepresentationChanger::GetBitRepresentationFor(
   const Operator* op;
   if (output_type->Is(Type::None())) {
     // This is an impossible value; it should not be used at runtime.
-    // We just provide a dummy value here.
-    return jsgraph()->Int32Constant(0);
+    return jsgraph()->DeadValue();
   } else if (output_rep == MachineRepresentation::kTagged ||
              output_rep == MachineRepresentation::kTaggedPointer) {
     if (output_type->Is(Type::BooleanOrNullOrUndefined())) {
@@ -825,8 +808,7 @@ Node* RepresentationChanger::GetWord64RepresentationFor(
     Node* node, MachineRepresentation output_rep, Type* output_type) {
   if (output_type->Is(Type::None())) {
     // This is an impossible value; it should not be used at runtime.
-    // We just provide a dummy value here.
-    return jsgraph()->Int64Constant(0);
+    return jsgraph()->DeadValue();
   } else if (output_rep == MachineRepresentation::kBit) {
     return node;  // Sloppy comparison -> word64
   }
@@ -839,9 +821,11 @@ const Operator* RepresentationChanger::Int32OperatorFor(
     IrOpcode::Value opcode) {
   switch (opcode) {
     case IrOpcode::kSpeculativeNumberAdd:  // Fall through.
+    case IrOpcode::kSpeculativeSafeIntegerAdd:
     case IrOpcode::kNumberAdd:
       return machine()->Int32Add();
     case IrOpcode::kSpeculativeNumberSubtract:  // Fall through.
+    case IrOpcode::kSpeculativeSafeIntegerSubtract:
     case IrOpcode::kNumberSubtract:
       return machine()->Int32Sub();
     case IrOpcode::kSpeculativeNumberMultiply:
@@ -879,9 +863,9 @@ const Operator* RepresentationChanger::Int32OperatorFor(
 const Operator* RepresentationChanger::Int32OverflowOperatorFor(
     IrOpcode::Value opcode) {
   switch (opcode) {
-    case IrOpcode::kSpeculativeNumberAdd:
+    case IrOpcode::kSpeculativeSafeIntegerAdd:
       return simplified()->CheckedInt32Add();
-    case IrOpcode::kSpeculativeNumberSubtract:
+    case IrOpcode::kSpeculativeSafeIntegerSubtract:
       return simplified()->CheckedInt32Sub();
     case IrOpcode::kSpeculativeNumberDivide:
       return simplified()->CheckedInt32Div();
@@ -959,9 +943,11 @@ const Operator* RepresentationChanger::Float64OperatorFor(
     IrOpcode::Value opcode) {
   switch (opcode) {
     case IrOpcode::kSpeculativeNumberAdd:
+    case IrOpcode::kSpeculativeSafeIntegerAdd:
     case IrOpcode::kNumberAdd:
       return machine()->Float64Add();
     case IrOpcode::kSpeculativeNumberSubtract:
+    case IrOpcode::kSpeculativeSafeIntegerSubtract:
     case IrOpcode::kNumberSubtract:
       return machine()->Float64Sub();
     case IrOpcode::kSpeculativeNumberMultiply:

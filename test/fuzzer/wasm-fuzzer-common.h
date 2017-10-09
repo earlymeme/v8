@@ -17,8 +17,14 @@ namespace internal {
 namespace wasm {
 namespace fuzzer {
 
-int FuzzWasmSection(v8::internal::wasm::SectionCode section,
-                    const uint8_t* data, size_t size);
+int FuzzWasmSection(SectionCode section, const uint8_t* data, size_t size);
+
+// First instantiates and interprets the "main" function within module_object if
+// possible. If the interpretation finishes within kMaxSteps steps,
+// module_object is instantiated again and the compiled "main" function is
+// executed.
+void InterpretAndExecuteModule(Isolate* isolate,
+                               Handle<WasmModuleObject> module_object);
 
 class WasmExecutionFuzzer {
  public:
@@ -29,7 +35,7 @@ class WasmExecutionFuzzer {
   virtual bool GenerateModule(
       Isolate* isolate, Zone* zone, const uint8_t* data, size_t size,
       ZoneBuffer& buffer, int32_t& num_args,
-      std::unique_ptr<WasmVal[]>& interpreter_args,
+      std::unique_ptr<WasmValue[]>& interpreter_args,
       std::unique_ptr<Handle<Object>[]>& compiler_args) = 0;
 };
 

@@ -4,19 +4,11 @@
 
 #include <set>
 
-#include "src/factory.h"
+#include "src/factory-inl.h"
 #include "src/identity-map.h"
 #include "src/isolate.h"
 #include "src/objects.h"
 #include "src/zone/zone.h"
-// FIXME(mstarzinger, marja): This is weird, but required because of the missing
-// (disallowed) include: src/factory.h -> src/objects-inl.h
-#include "src/objects-inl.h"
-// FIXME(mstarzinger, marja): This is weird, but required because of the missing
-// (disallowed) include: src/feedback-vector.h ->
-// src/feedback-vector-inl.h
-#include "src/feedback-vector-inl.h"
-#include "src/v8.h"
 #include "test/cctest/cctest.h"
 
 namespace v8 {
@@ -149,7 +141,7 @@ class IdentityMapTester : public HandleAndZoneScope {
   void SimulateGCByIncrementingSmisBy(int shift) {
     for (int i = 0; i < map.capacity_; i++) {
       if (map.keys_[i]->IsSmi()) {
-        map.keys_[i] = Smi::FromInt(Smi::cast(map.keys_[i])->value() + shift);
+        map.keys_[i] = Smi::FromInt(Smi::ToInt(map.keys_[i]) + shift);
       }
     }
     map.gc_counter_ = -1;
@@ -186,7 +178,6 @@ class IdentityMapTester : public HandleAndZoneScope {
 
   void Rehash() { map.Rehash(); }
 };
-
 
 TEST(Find_smi_not_found) {
   IdentityMapTester t;
@@ -673,7 +664,6 @@ TEST(Collisions_7) { CollisionTest(7); }
 TEST(Resize) { CollisionTest(9, false, true); }
 TEST(Rehash) { CollisionTest(11, true, false); }
 
-
 TEST(ExplicitGC) {
   IdentityMapTester t;
   Handle<Object> num_keys[] = {t.num(2.1), t.num(2.4), t.num(3.3), t.num(4.3),
@@ -695,7 +685,6 @@ TEST(ExplicitGC) {
   }
 }
 
-
 TEST(CanonicalHandleScope) {
   Isolate* isolate = CcTest::i_isolate();
   Heap* heap = CcTest::heap();
@@ -703,9 +692,9 @@ TEST(CanonicalHandleScope) {
   CanonicalHandleScope outer_canonical(isolate);
 
   // Deduplicate smi handles.
-  List<Handle<Object> > smi_handles;
+  std::vector<Handle<Object>> smi_handles;
   for (int i = 0; i < 100; i++) {
-    smi_handles.Add(Handle<Object>(Smi::FromInt(i), isolate));
+    smi_handles.push_back(Handle<Object>(Smi::FromInt(i), isolate));
   }
   Object** next_handle = isolate->handle_scope_data()->next;
   for (int i = 0; i < 100; i++) {
@@ -772,6 +761,56 @@ TEST(CanonicalHandleScope) {
     CHECK_NE(string1.location(), string6.location());
     CHECK_EQ(number5.location(), number6.location());
     CHECK_EQ(string5.location(), string6.location());
+  }
+}
+
+TEST(GCShortCutting) {
+  ManualGCScope manual_gc_scope;
+  IdentityMapTester t;
+  Isolate* isolate = CcTest::i_isolate();
+  Factory* factory = isolate->factory();
+  const int kDummyValue = 0;
+
+  for (int i = 0; i < 16; i++) {
+    // Insert a varying number of Smis as padding to ensure some tests straddle
+    // a boundary where the thin string short cutting will cause size_ to be
+    // greater to capacity_ if not corrected by IdentityMap
+    // (see crbug.com/704132).
+    for (int j = 0; j < i; j++) {
+      t.map.Set(t.smi(j), reinterpret_cast<void*>(kDummyValue));
+    }
+
+    Handle<String> thin_string =
+        factory->NewStringFromAsciiChecked("thin_string");
+    Handle<String> internalized_string =
+        factory->InternalizeString(thin_string);
+    DCHECK_IMPLIES(FLAG_thin_strings, thin_string->IsThinString());
+    DCHECK_NE(*thin_string, *internalized_string);
+
+    // Insert both keys into the map.
+    t.map.Set(thin_string, &thin_string);
+    t.map.Set(internalized_string, &internalized_string);
+
+    // Do an explicit, real GC, this should short-cut the thin string to point
+    // to the internalized string.
+    t.heap()->CollectGarbage(i::NEW_SPACE,
+                             i::GarbageCollectionReason::kTesting);
+    DCHECK_IMPLIES(FLAG_thin_strings && !FLAG_optimize_for_size,
+                   *thin_string == *internalized_string);
+
+    // Check that getting the object points to one of the handles.
+    void** thin_string_entry = t.map.Get(thin_string);
+    CHECK(*thin_string_entry == &thin_string ||
+          *thin_string_entry == &internalized_string);
+    void** internalized_string_entry = t.map.Get(internalized_string);
+    CHECK(*internalized_string_entry == &thin_string ||
+          *internalized_string_entry == &internalized_string);
+
+    // Trigger resize.
+    for (int j = 0; j < 16; j++) {
+      t.map.Set(t.smi(j + 16), reinterpret_cast<void*>(kDummyValue));
+    }
+    t.map.Clear();
   }
 }
 

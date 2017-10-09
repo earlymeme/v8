@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef V8_TEST_CCTEST_INTERPRETER_INTERPRETER_TESTER_H_
+#define V8_TEST_CCTEST_INTERPRETER_INTERPRETER_TESTER_H_
+
 #include "src/v8.h"
 
 #include "src/api.h"
@@ -51,10 +54,6 @@ class InterpreterCallable {
   Handle<JSFunction> function_;
 };
 
-namespace {
-const char kFunctionName[] = "f";
-}  // namespace
-
 class InterpreterTester {
  public:
   InterpreterTester(Isolate* isolate, const char* source,
@@ -87,6 +86,8 @@ class InterpreterTester {
 
   static std::string function_name();
 
+  static const char kFunctionName[];
+
  private:
   Isolate* isolate_;
   const char* source_;
@@ -114,8 +115,7 @@ class InterpreterTester {
       source += "){})";
       function = Handle<JSFunction>::cast(v8::Utils::OpenHandle(
           *v8::Local<v8::Function>::Cast(CompileRun(source.c_str()))));
-      function->ReplaceCode(
-          *isolate_->builtins()->InterpreterEntryTrampoline());
+      function->set_code(*BUILTIN_CODE(isolate_, InterpreterEntryTrampoline));
     }
 
     if (!bytecode_.is_null()) {
@@ -136,3 +136,5 @@ class InterpreterTester {
 }  // namespace interpreter
 }  // namespace internal
 }  // namespace v8
+
+#endif  // V8_TEST_CCTEST_INTERPRETER_INTERPRETER_TESTER_H_

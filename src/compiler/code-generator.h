@@ -5,8 +5,10 @@
 #ifndef V8_COMPILER_CODE_GENERATOR_H_
 #define V8_COMPILER_CODE_GENERATOR_H_
 
+#include "src/base/optional.h"
 #include "src/compiler/gap-resolver.h"
 #include "src/compiler/instruction.h"
+#include "src/compiler/osr.h"
 #include "src/compiler/unwinding-info-writer.h"
 #include "src/deoptimizer.h"
 #include "src/macro-assembler.h"
@@ -65,9 +67,7 @@ class DeoptimizationLiteral {
            bit_cast<uint64_t>(number_) == bit_cast<uint64_t>(other.number_);
   }
 
-  Handle<Object> Reify(Isolate* isolate) const {
-    return object_.is_null() ? isolate->factory()->NewNumber(number_) : object_;
-  }
+  Handle<Object> Reify(Isolate* isolate) const;
 
  private:
   Handle<Object> object_;
@@ -77,13 +77,16 @@ class DeoptimizationLiteral {
 // Generates native code for a sequence of instructions.
 class CodeGenerator final : public GapResolver::Assembler {
  public:
-  explicit CodeGenerator(Frame* frame, Linkage* linkage,
-                         InstructionSequence* code, CompilationInfo* info);
+  explicit CodeGenerator(Zone* codegen_zone, Frame* frame, Linkage* linkage,
+                         InstructionSequence* code, CompilationInfo* info,
+                         base::Optional<OsrHelper> osr_helper,
+                         int start_source_position,
+                         JumpOptimizationInfo* jump_opt);
 
   // Generate native code. After calling AssembleCode, call FinalizeCode to
   // produce the actual code object. If an error occurs during either phase,
   // FinalizeCode returns a null handle.
-  void AssembleCode();
+  void AssembleCode();  // Does not need to run on main thread.
   Handle<Code> FinalizeCode();
 
   InstructionSequence* code() const { return code_; }
@@ -94,20 +97,25 @@ class CodeGenerator final : public GapResolver::Assembler {
 
   Label* GetLabel(RpoNumber rpo) { return &labels_[rpo.ToSize()]; }
 
-  void AssembleSourcePosition(Instruction* instr);
+  SourcePosition start_source_position() const {
+    return start_source_position_;
+  }
 
+  void AssembleSourcePosition(Instruction* instr);
   void AssembleSourcePosition(SourcePosition source_position);
 
   // Record a safepoint with the given pointer map.
   void RecordSafepoint(ReferenceMap* references, Safepoint::Kind kind,
                        int arguments, Safepoint::DeoptMode deopt_mode);
 
+  Zone* zone() const { return zone_; }
+
  private:
-  MacroAssembler* masm() { return &masm_; }
+  TurboAssembler* tasm() { return &tasm_; }
   GapResolver* resolver() { return &resolver_; }
   SafepointTableBuilder* safepoints() { return &safepoints_; }
-  Zone* zone() const { return code()->zone(); }
   CompilationInfo* info() const { return info_; }
+  OsrHelper* osr_helper() { return &(*osr_helper_); }
 
   // Create the FrameAccessState object. The Frame is immutable from here on.
   void CreateFrameAccessState(Frame* frame);
@@ -140,6 +148,9 @@ class CodeGenerator final : public GapResolver::Assembler {
   // adjusted stack pointer is returned in |slot|.
   bool GetSlotAboveSPBeforeTailCall(Instruction* instr, int* slot);
 
+  CodeGenResult AssembleDeoptimizerCall(int deoptimization_id,
+                                        SourcePosition pos);
+
   // ===========================================================================
   // ============= Architecture-specific code generation methods. ==============
   // ===========================================================================
@@ -152,8 +163,11 @@ class CodeGenerator final : public GapResolver::Assembler {
   void AssembleArchLookupSwitch(Instruction* instr);
   void AssembleArchTableSwitch(Instruction* instr);
 
-  CodeGenResult AssembleDeoptimizerCall(int deoptimization_id,
-                                        SourcePosition pos);
+  // When entering a code that is marked for deoptimization, rather continuing
+  // with its execution, we jump to a lazy compiled code. We need to do this
+  // because this code has already been deoptimized and needs to be unlinked
+  // from the JS functions referring it.
+  void BailoutIfDeoptimized();
 
   // Generates an architecture-specific, descriptor-specific prologue
   // to set up a stack frame.
@@ -174,10 +188,9 @@ class CodeGenerator final : public GapResolver::Assembler {
 
   enum PushTypeFlag {
     kImmediatePush = 0x1,
-    kScalarPush = 0x2,
-    kFloat32Push = 0x4,
-    kFloat64Push = 0x8,
-    kFloatPush = kFloat32Push | kFloat64Push
+    kRegisterPush = 0x2,
+    kStackSlotPush = 0x4,
+    kScalarPush = kRegisterPush | kStackSlotPush
   };
 
   typedef base::Flags<PushTypeFlag> PushTypeFlags;
@@ -257,7 +270,6 @@ class CodeGenerator final : public GapResolver::Assembler {
                                              Translation* translation);
   void AddTranslationForOperand(Translation* translation, Instruction* instr,
                                 InstructionOperand* op, MachineType type);
-  void EnsureSpaceForLazyDeopt();
   void MarkLazyDeoptSite();
 
   DeoptimizationExit* AddDeoptimizationExit(Instruction* instr,
@@ -295,7 +307,9 @@ class CodeGenerator final : public GapResolver::Assembler {
   };
 
   friend class OutOfLineCode;
+  friend class CodeGeneratorTester;
 
+  Zone* zone_;
   FrameAccessState* frame_access_state_;
   Linkage* const linkage_;
   InstructionSequence* const code_;
@@ -304,8 +318,9 @@ class CodeGenerator final : public GapResolver::Assembler {
   Label* const labels_;
   Label return_label_;
   RpoNumber current_block_;
+  SourcePosition start_source_position_;
   SourcePosition current_source_position_;
-  MacroAssembler masm_;
+  TurboAssembler tasm_;
   GapResolver resolver_;
   SafepointTableBuilder safepoints_;
   ZoneVector<HandlerInfo> handlers_;
@@ -315,8 +330,22 @@ class CodeGenerator final : public GapResolver::Assembler {
   size_t inlined_function_count_;
   TranslationBuffer translations_;
   int last_lazy_deopt_pc_;
+
+  // kArchCallCFunction could be reached either:
+  //   kArchCallCFunction;
+  // or:
+  //   kArchSaveCallerRegisters;
+  //   kArchCallCFunction;
+  //   kArchRestoreCallerRegisters;
+  // The boolean is used to distinguish the two cases. In the latter case, we
+  // also need to decide if FP registers need to be saved, which is controlled
+  // by fp_mode_.
+  bool caller_registers_saved_;
+  SaveFPRegsMode fp_mode_;
+
   JumpTable* jump_tables_;
   OutOfLineCode* ools_;
+  base::Optional<OsrHelper> osr_helper_;
   int osr_pc_offset_;
   int optimized_out_literal_id_;
   SourcePositionTableBuilder source_position_table_builder_;

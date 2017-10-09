@@ -17,10 +17,15 @@ namespace internal {
 class CompilationInfo;
 class CompilationJob;
 class RegisterConfiguration;
+class JumpOptimizationInfo;
 
 namespace trap_handler {
 struct ProtectedInstructionData;
 }  // namespace trap_handler
+
+namespace wasm {
+enum ModuleOrigin : uint8_t;
+}  // namespace wasm
 
 namespace compiler {
 
@@ -43,15 +48,16 @@ class Pipeline : public AllStatic {
       SourcePositionTable* source_positions,
       ZoneVector<trap_handler::ProtectedInstructionData>*
           protected_instructions,
-      bool wasm_origin);
+      wasm::ModuleOrigin wasm_origin);
 
   // Run the pipeline on a machine graph and generate code. The {schedule} must
   // be valid, hence the given {graph} does not need to be schedulable.
   static Handle<Code> GenerateCodeForCodeStub(Isolate* isolate,
                                               CallDescriptor* call_descriptor,
                                               Graph* graph, Schedule* schedule,
-                                              Code::Flags flags,
-                                              const char* debug_name);
+                                              Code::Kind kind,
+                                              const char* debug_name,
+                                              JumpOptimizationInfo* jump_opt);
 
   // Run the entire pipeline and generate a handle to a code object suitable for
   // testing.

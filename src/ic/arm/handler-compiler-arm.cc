@@ -47,9 +47,9 @@ void NamedStoreHandlerCompiler::GenerateStoreViaSetter(
     __ push(value());
 
     if (accessor_index >= 0) {
-      DCHECK(!holder.is(scratch));
-      DCHECK(!receiver.is(scratch));
-      DCHECK(!value().is(scratch));
+      DCHECK(holder != scratch);
+      DCHECK(receiver != scratch);
+      DCHECK(value() != scratch);
       // Call the JavaScript setter with receiver and value on the stack.
       if (map->IsJSGlobalObjectMap()) {
         // Swap in the global receiver.
@@ -110,7 +110,7 @@ void PropertyHandlerCompiler::GenerateDictionaryNegativeLookup(
     MacroAssembler* masm, Label* miss_label, Register receiver,
     Handle<Name> name, Register scratch0, Register scratch1) {
   DCHECK(name->IsUniqueName());
-  DCHECK(!receiver.is(scratch0));
+  DCHECK(receiver != scratch0);
   Counters* counters = masm->isolate()->counters();
   __ IncrementCounter(counters->negative_lookups(), 1, scratch0, scratch1);
   __ IncrementCounter(counters->negative_lookups_miss(), 1, scratch0, scratch1);
@@ -134,7 +134,8 @@ void PropertyHandlerCompiler::GenerateDictionaryNegativeLookup(
 
   // Load properties array.
   Register properties = scratch0;
-  __ ldr(properties, FieldMemOperand(receiver, JSObject::kPropertiesOffset));
+  __ ldr(properties,
+         FieldMemOperand(receiver, JSObject::kPropertiesOrHashOffset));
   // Check that the properties array is a dictionary.
   __ ldr(map, FieldMemOperand(properties, HeapObject::kMapOffset));
   Register tmp = properties;
@@ -143,8 +144,8 @@ void PropertyHandlerCompiler::GenerateDictionaryNegativeLookup(
   __ b(ne, miss_label);
 
   // Restore the temporarily used register.
-  __ ldr(properties, FieldMemOperand(receiver, JSObject::kPropertiesOffset));
-
+  __ ldr(properties,
+         FieldMemOperand(receiver, JSObject::kPropertiesOrHashOffset));
 
   NameDictionaryLookupStub::GenerateNegativeLookup(
       masm, miss_label, &done, receiver, properties, name, scratch1);
@@ -165,8 +166,7 @@ void PropertyHandlerCompiler::GenerateCheckPropertyCell(
   Handle<WeakCell> weak_cell = isolate->factory()->NewWeakCell(cell);
   __ LoadWeakValue(scratch, weak_cell, miss);
   __ ldr(scratch, FieldMemOperand(scratch, PropertyCell::kValueOffset));
-  __ LoadRoot(ip, Heap::kTheHoleValueRootIndex);
-  __ cmp(scratch, ip);
+  __ CompareRoot(scratch, Heap::kTheHoleValueRootIndex);
   __ b(ne, miss);
 }
 
@@ -176,13 +176,14 @@ void PropertyHandlerCompiler::GenerateApiAccessorCall(
     Handle<Map> receiver_map, Register receiver, Register scratch_in,
     bool is_store, Register store_parameter, Register accessor_holder,
     int accessor_index) {
-  DCHECK(!accessor_holder.is(scratch_in));
-  DCHECK(!receiver.is(scratch_in));
+  DCHECK(accessor_holder != scratch_in);
+  DCHECK(receiver != scratch_in);
+  __ push(accessor_holder);
   __ push(receiver);
   // Write the arguments to stack frame.
   if (is_store) {
-    DCHECK(!receiver.is(store_parameter));
-    DCHECK(!scratch_in.is(store_parameter));
+    DCHECK(receiver != store_parameter);
+    DCHECK(scratch_in != store_parameter);
     __ push(store_parameter);
   }
   DCHECK(optimization.is_simple_api_call());
@@ -199,9 +200,7 @@ void PropertyHandlerCompiler::GenerateApiAccessorCall(
 
   // Put holder in place.
   CallOptimization::HolderLookup holder_lookup;
-  int holder_depth = 0;
-  optimization.LookupHolderOfExpectedType(receiver_map, &holder_lookup,
-                                          &holder_depth);
+  optimization.LookupHolderOfExpectedType(receiver_map, &holder_lookup);
   switch (holder_lookup) {
     case CallOptimization::kHolderIsReceiver:
       __ Move(holder, receiver);
@@ -209,10 +208,6 @@ void PropertyHandlerCompiler::GenerateApiAccessorCall(
     case CallOptimization::kHolderFound:
       __ ldr(holder, FieldMemOperand(receiver, HeapObject::kMapOffset));
       __ ldr(holder, FieldMemOperand(holder, Map::kPrototypeOffset));
-      for (int i = 1; i < holder_depth; i++) {
-        __ ldr(holder, FieldMemOperand(holder, HeapObject::kMapOffset));
-        __ ldr(holder, FieldMemOperand(holder, Map::kPrototypeOffset));
-      }
       break;
     case CallOptimization::kHolderNotFound:
       UNREACHABLE();
@@ -294,9 +289,9 @@ Register PropertyHandlerCompiler::CheckPrototypes(
   Handle<Map> receiver_map = map();
 
   // Make sure there's no overlap between holder and object registers.
-  DCHECK(!scratch1.is(object_reg) && !scratch1.is(holder_reg));
-  DCHECK(!scratch2.is(object_reg) && !scratch2.is(holder_reg) &&
-         !scratch2.is(scratch1));
+  DCHECK(scratch1 != object_reg && scratch1 != holder_reg);
+  DCHECK(scratch2 != object_reg && scratch2 != holder_reg &&
+         scratch2 != scratch1);
 
   Handle<Cell> validity_cell =
       Map::GetOrCreatePrototypeChainValidityCell(receiver_map, isolate());
@@ -371,9 +366,8 @@ void NamedLoadHandlerCompiler::FrontendFooter(Handle<Name> name, Label* miss) {
     Label success;
     __ b(&success);
     __ bind(miss);
-    DCHECK(kind() == Code::LOAD_IC);
     PopVectorAndSlot();
-    TailCallBuiltin(masm(), MissBuiltin(kind()));
+    TailCallBuiltin(masm(), Builtins::kLoadIC_Miss);
     __ bind(&success);
   }
 }
@@ -385,7 +379,7 @@ void NamedStoreHandlerCompiler::FrontendFooter(Handle<Name> name, Label* miss) {
     __ b(&success);
     GenerateRestoreName(miss, name);
     PopVectorAndSlot();
-    TailCallBuiltin(masm(), MissBuiltin(kind()));
+    TailCallBuiltin(masm(), Builtins::kStoreIC_Miss);
     __ bind(&success);
   }
 }
@@ -402,24 +396,29 @@ Handle<Code> NamedStoreHandlerCompiler::CompileStoreCallback(
   __ push(receiver());  // receiver
   __ push(holder_reg);
 
-  // If the callback cannot leak, then push the callback directly,
-  // otherwise wrap it in a weak cell.
-  if (callback->data()->IsUndefined(isolate()) || callback->data()->IsSmi()) {
-    __ mov(ip, Operand(callback));
-  } else {
-    Handle<WeakCell> cell = isolate()->factory()->NewWeakCell(callback);
-    __ mov(ip, Operand(cell));
+  {
+    UseScratchRegisterScope temps(masm());
+    Register scratch = temps.Acquire();
+
+    // If the callback cannot leak, then push the callback directly,
+    // otherwise wrap it in a weak cell.
+    if (callback->data()->IsUndefined(isolate()) || callback->data()->IsSmi()) {
+      __ mov(scratch, Operand(callback));
+    } else {
+      Handle<WeakCell> cell = isolate()->factory()->NewWeakCell(callback);
+      __ mov(scratch, Operand(cell));
+    }
+    __ push(scratch);
+    __ mov(scratch, Operand(name));
+    __ Push(scratch, value());
   }
-  __ push(ip);
-  __ mov(ip, Operand(name));
-  __ Push(ip, value());
   __ Push(Smi::FromInt(language_mode));
 
   // Do tail-call to the runtime system.
   __ TailCallRuntime(Runtime::kStoreCallbackProperty);
 
   // Return the generated code.
-  return GetCode(kind(), name);
+  return GetCode(name);
 }
 
 

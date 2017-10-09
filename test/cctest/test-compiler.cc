@@ -38,7 +38,8 @@
 #include "src/objects-inl.h"
 #include "test/cctest/cctest.h"
 
-using namespace v8::internal;
+namespace v8 {
+namespace internal {
 
 static Handle<Object> GetGlobalProperty(const char* name) {
   Isolate* isolate = CcTest::i_isolate();
@@ -62,10 +63,13 @@ static Handle<JSFunction> Compile(const char* source) {
   Isolate* isolate = CcTest::i_isolate();
   Handle<String> source_code = isolate->factory()->NewStringFromUtf8(
       CStrVector(source)).ToHandleChecked();
-  Handle<SharedFunctionInfo> shared = Compiler::GetSharedFunctionInfoForScript(
-      source_code, Handle<String>(), 0, 0, v8::ScriptOriginOptions(),
-      Handle<Object>(), Handle<Context>(isolate->native_context()), NULL, NULL,
-      v8::ScriptCompiler::kNoCompileOptions, NOT_NATIVES_CODE);
+  Handle<SharedFunctionInfo> shared =
+      Compiler::GetSharedFunctionInfoForScript(
+          source_code, MaybeHandle<String>(), 0, 0, v8::ScriptOriginOptions(),
+          MaybeHandle<Object>(), Handle<Context>(isolate->native_context()),
+          NULL, NULL, v8::ScriptCompiler::kNoCompileOptions, NOT_NATIVES_CODE,
+          MaybeHandle<FixedArray>())
+          .ToHandleChecked();
   return isolate->factory()->NewFunctionFromSharedFunctionInfo(
       shared, isolate->native_context());
 }
@@ -305,12 +309,8 @@ TEST(FeedbackVectorPreservedAcrossRecompiles) {
       v8::Utils::OpenHandle(*v8::Local<v8::Function>::Cast(
           CcTest::global()->Get(context, v8_str("f")).ToLocalChecked())));
 
-  // We shouldn't have deoptimization support. We want to recompile and
-  // verify that our feedback vector preserves information.
-  CHECK(!f->shared()->has_deoptimization_support());
-  Handle<FeedbackVector> feedback_vector(f->feedback_vector());
-
   // Verify that we gathered feedback.
+  Handle<FeedbackVector> feedback_vector(f->feedback_vector());
   CHECK(!feedback_vector->is_empty());
   FeedbackSlot slot_for_a(0);
   Object* object = feedback_vector->Get(slot_for_a);
@@ -322,11 +322,6 @@ TEST(FeedbackVectorPreservedAcrossRecompiles) {
   // Verify that the feedback is still "gathered" despite a recompilation
   // of the full code.
   CHECK(f->IsOptimized());
-  // If the baseline code is bytecode, then it will not have deoptimization
-  // support. The has_deoptimization_support() check is only required if the
-  // baseline code is from fullcodegen.
-  CHECK(f->shared()->has_deoptimization_support() || i::FLAG_ignition ||
-        i::FLAG_turbo);
   object = f->feedback_vector()->Get(slot_for_a);
   CHECK(object->IsWeakCell() &&
         WeakCell::cast(object)->value()->IsJSFunction());
@@ -570,6 +565,7 @@ TEST(CompileFunctionInContextHarmonyFunctionToString) {
     v8::Local<v8::Context> context = (__local_context__);                     \
     if (try_catch.HasCaught()) {                                              \
       v8::String::Utf8Value error(                                            \
+          CcTest::isolate(),                                                  \
           try_catch.Exception()->ToString(context).ToLocalChecked());         \
       V8_Fatal(__FILE__, __LINE__,                                            \
                "Unexpected exception thrown during %s:\n\t%s\n", op, *error); \
@@ -604,9 +600,7 @@ TEST(CompileFunctionInContextHarmonyFunctionToString) {
       v8::Local<v8::String> result =
           fun->ToString(env.local()).ToLocalChecked();
       v8::Local<v8::String> expected = v8_str(
-          "function anonymous(event\n"
-          ") {\n"
-          "return event\n"
+          "function(event){return event\n"
           "}");
       CHECK(expected->Equals(env.local(), result).FromJust());
     }
@@ -630,9 +624,7 @@ TEST(CompileFunctionInContextHarmonyFunctionToString) {
       v8::Local<v8::String> result =
           fun->ToString(env.local()).ToLocalChecked();
       v8::Local<v8::String> expected = v8_str(
-          "function anonymous(\n"
-          ") {\n"
-          "return 0\n"
+          "function(){return 0\n"
           "}");
       CHECK(expected->Equals(env.local(), result).FromJust());
     }
@@ -641,63 +633,6 @@ TEST(CompileFunctionInContextHarmonyFunctionToString) {
 
 #undef CHECK_NOT_CAUGHT
 }
-
-#ifdef ENABLE_DISASSEMBLER
-static Handle<JSFunction> GetJSFunction(v8::Local<v8::Object> obj,
-                                        const char* property_name) {
-  v8::Local<v8::Function> fun = v8::Local<v8::Function>::Cast(
-      obj->Get(CcTest::isolate()->GetCurrentContext(), v8_str(property_name))
-          .ToLocalChecked());
-  return Handle<JSFunction>::cast(v8::Utils::OpenHandle(*fun));
-}
-
-
-static void CheckCodeForUnsafeLiteral(Handle<JSFunction> f) {
-  // Create a disassembler with default name lookup.
-  disasm::NameConverter name_converter;
-  disasm::Disassembler d(name_converter);
-
-  if (f->code()->kind() == Code::FUNCTION) {
-    Address pc = f->code()->instruction_start();
-    int decode_size =
-        Min(f->code()->instruction_size(),
-            static_cast<int>(f->code()->back_edge_table_offset()));
-    if (FLAG_enable_embedded_constant_pool) {
-      decode_size = Min(decode_size, f->code()->constant_pool_offset());
-    }
-    Address end = pc + decode_size;
-
-    v8::internal::EmbeddedVector<char, 128> decode_buffer;
-    v8::internal::EmbeddedVector<char, 128> smi_hex_buffer;
-    Smi* smi = Smi::FromInt(12345678);
-    SNPrintF(smi_hex_buffer, "0x%" V8PRIxPTR, reinterpret_cast<intptr_t>(smi));
-    while (pc < end) {
-      int num_const = d.ConstantPoolSizeAt(pc);
-      if (num_const >= 0) {
-        pc += (num_const + 1) * kPointerSize;
-      } else {
-        pc += d.InstructionDecode(decode_buffer, pc);
-        CHECK(strstr(decode_buffer.start(), smi_hex_buffer.start()) == NULL);
-      }
-    }
-  }
-}
-
-
-TEST(SplitConstantsInFullCompiler) {
-  LocalContext context;
-  v8::HandleScope scope(CcTest::isolate());
-
-  CompileRun("function f() { a = 12345678 }; f();");
-  CheckCodeForUnsafeLiteral(GetJSFunction(context->Global(), "f"));
-  CompileRun("function f(x) { a = 12345678 + x}; f(1);");
-  CheckCodeForUnsafeLiteral(GetJSFunction(context->Global(), "f"));
-  CompileRun("function f(x) { var arguments = 1; x += 12345678}; f(1);");
-  CheckCodeForUnsafeLiteral(GetJSFunction(context->Global(), "f"));
-  CompileRun("function f(x) { var arguments = 1; x = 12345678}; f(1);");
-  CheckCodeForUnsafeLiteral(GetJSFunction(context->Global(), "f"));
-}
-#endif
 
 TEST(InvocationCount) {
   FLAG_allow_natives_syntax = true;
@@ -718,3 +653,6 @@ TEST(InvocationCount) {
   CompileRun("foo(); foo()");
   CHECK_EQ(4, foo->feedback_vector()->invocation_count());
 }
+
+}  // namespace internal
+}  // namespace v8

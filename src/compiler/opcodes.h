@@ -48,34 +48,39 @@
   V(RelocatableInt32Constant) \
   V(RelocatableInt64Constant)
 
-#define INNER_OP_LIST(V)    \
-  V(Select)                 \
-  V(Phi)                    \
-  V(EffectPhi)              \
-  V(InductionVariablePhi)   \
-  V(Checkpoint)             \
-  V(BeginRegion)            \
-  V(FinishRegion)           \
-  V(FrameState)             \
-  V(StateValues)            \
-  V(TypedStateValues)       \
-  V(ArgumentsElementsState) \
-  V(ArgumentsLengthState)   \
-  V(ObjectState)            \
-  V(TypedObjectState)       \
-  V(Call)                   \
-  V(Parameter)              \
-  V(OsrValue)               \
-  V(LoopExit)               \
-  V(LoopExitValue)          \
-  V(LoopExitEffect)         \
-  V(Projection)             \
-  V(Retain)                 \
+#define INNER_OP_LIST(V)          \
+  V(Select)                       \
+  V(Phi)                          \
+  V(EffectPhi)                    \
+  V(InductionVariablePhi)         \
+  V(Checkpoint)                   \
+  V(BeginRegion)                  \
+  V(FinishRegion)                 \
+  V(FrameState)                   \
+  V(StateValues)                  \
+  V(TypedStateValues)             \
+  V(ArgumentsElementsState)       \
+  V(ArgumentsLengthState)         \
+  V(ObjectState)                  \
+  V(ObjectId)                     \
+  V(TypedObjectState)             \
+  V(Call)                         \
+  V(CallWithCallerSavedRegisters) \
+  V(Parameter)                    \
+  V(OsrValue)                     \
+  V(LoopExit)                     \
+  V(LoopExitValue)                \
+  V(LoopExitEffect)               \
+  V(Projection)                   \
+  V(Retain)                       \
+  V(MapGuard)                     \
   V(TypeGuard)
 
 #define COMMON_OP_LIST(V) \
   CONSTANT_OP_LIST(V)     \
   INNER_OP_LIST(V)        \
+  V(Unreachable)          \
+  V(DeadValue)            \
   V(Dead)
 
 // Opcodes for JavaScript operators.
@@ -106,6 +111,7 @@
   JS_COMPARE_BINOP_LIST(V)      \
   JS_BITWISE_BINOP_LIST(V)      \
   JS_ARITH_BINOP_LIST(V)        \
+  V(JSHasInPrototypeChain)      \
   V(JSInstanceOf)               \
   V(JSOrdinaryHasInstance)
 
@@ -134,7 +140,9 @@
   V(JSCreateIterResultObject)     \
   V(JSCreateKeyValueArray)        \
   V(JSCreateLiteralArray)         \
+  V(JSCreateEmptyLiteralArray)    \
   V(JSCreateLiteralObject)        \
+  V(JSCreateEmptyLiteralObject)   \
   V(JSCreateLiteralRegExp)        \
   V(JSLoadProperty)               \
   V(JSLoadNamed)                  \
@@ -161,12 +169,15 @@
 #define JS_OTHER_OP_LIST(V)         \
   V(JSConstructForwardVarargs)      \
   V(JSConstruct)                    \
+  V(JSConstructWithArrayLike)       \
   V(JSConstructWithSpread)          \
   V(JSCallForwardVarargs)           \
   V(JSCall)                         \
+  V(JSCallWithArrayLike)            \
   V(JSCallWithSpread)               \
   V(JSCallRuntime)                  \
   V(JSConvertReceiver)              \
+  V(JSForInEnumerate)               \
   V(JSForInNext)                    \
   V(JSForInPrepare)                 \
   V(JSLoadMessage)                  \
@@ -265,7 +276,9 @@
   V(SpeculativeNumberBitwiseXor)                    \
   V(SpeculativeNumberShiftLeft)                     \
   V(SpeculativeNumberShiftRight)                    \
-  V(SpeculativeNumberShiftRightLogical)
+  V(SpeculativeNumberShiftRightLogical)             \
+  V(SpeculativeSafeIntegerAdd)                      \
+  V(SpeculativeSafeIntegerSubtract)
 
 #define SIMPLIFIED_NUMBER_UNOP_LIST(V) \
   V(NumberAbs)                         \
@@ -311,9 +324,12 @@
   V(BooleanNot)                     \
   V(StringCharAt)                   \
   V(StringCharCodeAt)               \
+  V(SeqStringCharCodeAt)            \
   V(StringFromCharCode)             \
   V(StringFromCodePoint)            \
   V(StringIndexOf)                  \
+  V(StringToLowerCaseIntl)          \
+  V(StringToUpperCaseIntl)          \
   V(CheckBounds)                    \
   V(CheckIf)                        \
   V(CheckMaps)                      \
@@ -321,22 +337,27 @@
   V(CheckInternalizedString)        \
   V(CheckReceiver)                  \
   V(CheckString)                    \
+  V(CheckSeqString)                 \
   V(CheckSymbol)                    \
   V(CheckSmi)                       \
   V(CheckHeapObject)                \
   V(CheckFloat64Hole)               \
-  V(CheckTaggedHole)                \
+  V(CheckNotTaggedHole)             \
+  V(CompareMaps)                    \
   V(ConvertTaggedHoleToUndefined)   \
   V(Allocate)                       \
+  V(LoadFieldByIndex)               \
   V(LoadField)                      \
-  V(LoadBuffer)                     \
   V(LoadElement)                    \
   V(LoadTypedElement)               \
   V(StoreField)                     \
-  V(StoreBuffer)                    \
   V(StoreElement)                   \
   V(StoreTypedElement)              \
+  V(TransitionAndStoreElement)      \
+  V(ObjectIsArrayBufferView)        \
+  V(ObjectIsCallable)               \
   V(ObjectIsDetectableCallable)     \
+  V(ObjectIsMinusZero)              \
   V(ObjectIsNaN)                    \
   V(ObjectIsNonCallable)            \
   V(ObjectIsNumber)                 \
@@ -347,11 +368,16 @@
   V(ObjectIsUndetectable)           \
   V(ArgumentsFrame)                 \
   V(ArgumentsLength)                \
-  V(NewUnmappedArgumentsElements)   \
+  V(NewFastDoubleElements)          \
+  V(NewFastSmiOrObjectElements)     \
+  V(NewArgumentsElements)           \
   V(ArrayBufferWasNeutered)         \
   V(EnsureWritableFastElements)     \
   V(MaybeGrowFastElements)          \
-  V(TransitionElementsKind)
+  V(TransitionElementsKind)         \
+  V(LookupHashStorageIndex)         \
+  V(LookupSigned32HashStorageIndex) \
+  V(RuntimeAbort)
 
 #define SIMPLIFIED_OP_LIST(V)                 \
   SIMPLIFIED_CHANGE_OP_LIST(V)                \
@@ -494,6 +520,7 @@
   MACHINE_FLOAT32_UNOP_LIST(V)  \
   MACHINE_FLOAT64_BINOP_LIST(V) \
   MACHINE_FLOAT64_UNOP_LIST(V)  \
+  V(DebugAbort)                 \
   V(DebugBreak)                 \
   V(Comment)                    \
   V(Load)                       \
@@ -694,31 +721,12 @@
   V(S128And)                    \
   V(S128Or)                     \
   V(S128Xor)                    \
-  V(S32x4Shuffle)               \
-  V(S32x4Select)                \
-  V(S16x8Shuffle)               \
-  V(S16x8Select)                \
+  V(S128Select)                 \
   V(S8x16Shuffle)               \
-  V(S8x16Select)                \
-  V(S1x4Zero)                   \
-  V(S1x4And)                    \
-  V(S1x4Or)                     \
-  V(S1x4Xor)                    \
-  V(S1x4Not)                    \
   V(S1x4AnyTrue)                \
   V(S1x4AllTrue)                \
-  V(S1x8Zero)                   \
-  V(S1x8And)                    \
-  V(S1x8Or)                     \
-  V(S1x8Xor)                    \
-  V(S1x8Not)                    \
   V(S1x8AnyTrue)                \
   V(S1x8AllTrue)                \
-  V(S1x16Zero)                  \
-  V(S1x16And)                   \
-  V(S1x16Or)                    \
-  V(S1x16Xor)                   \
-  V(S1x16Not)                   \
   V(S1x16AnyTrue)               \
   V(S1x16AllTrue)
 

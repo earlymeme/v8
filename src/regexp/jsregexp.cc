@@ -5,6 +5,7 @@
 #include "src/regexp/jsregexp.h"
 
 #include <memory>
+#include <vector>
 
 #include "src/base/platform/platform.h"
 #include "src/compilation-cache.h"
@@ -25,6 +26,7 @@
 #include "src/splay-tree-inl.h"
 #include "src/string-search.h"
 #include "src/unicode-decoder.h"
+#include "src/unicode-inl.h"
 
 #ifdef V8_INTL_SUPPORT
 #include "unicode/uniset.h"
@@ -48,8 +50,6 @@
 #include "src/regexp/mips/regexp-macro-assembler-mips.h"
 #elif V8_TARGET_ARCH_MIPS64
 #include "src/regexp/mips64/regexp-macro-assembler-mips64.h"
-#elif V8_TARGET_ARCH_X87
-#include "src/regexp/x87/regexp-macro-assembler-x87.h"
 #else
 #error Unsupported target architecture.
 #endif
@@ -79,8 +79,8 @@ ContainedInLattice AddRange(ContainedInLattice containment,
                             const int* ranges,
                             int ranges_length,
                             Interval new_range) {
-  DCHECK((ranges_length & 1) == 1);
-  DCHECK(ranges[ranges_length - 1] == String::kMaxCodePoint + 1);
+  DCHECK_EQ(1, ranges_length & 1);
+  DCHECK_EQ(String::kMaxCodePoint + 1, ranges[ranges_length - 1]);
   if (containment == kLatticeUnknown) return containment;
   bool inside = false;
   int last = 0;
@@ -98,39 +98,11 @@ ContainedInLattice AddRange(ContainedInLattice containment,
   return containment;
 }
 
+// Generic RegExp methods. Dispatches to implementation specific methods.
 
-// More makes code generation slower, less makes V8 benchmark score lower.
-const int kMaxLookaheadForBoyerMoore = 8;
 // In a 3-character pattern you can maximally step forwards 3 characters
 // at a time, which is not always enough to pay for the extra logic.
 const int kPatternTooShortForBoyerMoore = 2;
-
-
-// Identifies the sort of regexps where the regexp engine is faster
-// than the code used for atom matches.
-static bool HasFewDifferentCharacters(Handle<String> pattern) {
-  int length = Min(kMaxLookaheadForBoyerMoore, pattern->length());
-  if (length <= kPatternTooShortForBoyerMoore) return false;
-  const int kMod = 128;
-  bool character_found[kMod];
-  int different = 0;
-  memset(&character_found[0], 0, sizeof(character_found));
-  for (int i = 0; i < length; i++) {
-    int ch = (pattern->Get(i) & (kMod - 1));
-    if (!character_found[ch]) {
-      character_found[ch] = true;
-      different++;
-      // We declare a regexp low-alphabet if it has at least 3 times as many
-      // characters as it has different characters.
-      if (different * 3 > length) return false;
-    }
-  }
-  return true;
-}
-
-
-// Generic RegExp methods. Dispatches to implementation specific methods.
-
 
 MaybeHandle<Object> RegExpImpl::Compile(Handle<JSRegExp> re,
                                         Handle<String> pattern,
@@ -151,7 +123,8 @@ MaybeHandle<Object> RegExpImpl::Compile(Handle<JSRegExp> re,
   PostponeInterruptsScope postpone(isolate);
   RegExpCompileData parse_result;
   FlatStringReader reader(isolate, pattern);
-  if (!RegExpParser::ParseRegExp(re->GetIsolate(), &zone, &reader, flags,
+  DCHECK(!isolate->has_pending_exception());
+  if (!RegExpParser::ParseRegExp(isolate, &zone, &reader, flags,
                                  &parse_result)) {
     // Throw an exception if we fail to parse the pattern.
     return ThrowRegExpException(re, pattern, parse_result.error);
@@ -160,7 +133,8 @@ MaybeHandle<Object> RegExpImpl::Compile(Handle<JSRegExp> re,
   bool has_been_compiled = false;
 
   if (parse_result.simple && !(flags & JSRegExp::kIgnoreCase) &&
-      !(flags & JSRegExp::kSticky) && !HasFewDifferentCharacters(pattern)) {
+      !(flags & JSRegExp::kSticky) &&
+      pattern->length() <= kPatternTooShortForBoyerMoore) {
     // Parse-tree is a single atom that is equal to the pattern.
     AtomCompile(re, pattern, flags, pattern);
     has_been_compiled = true;
@@ -168,12 +142,11 @@ MaybeHandle<Object> RegExpImpl::Compile(Handle<JSRegExp> re,
              !(flags & JSRegExp::kSticky) && parse_result.capture_count == 0) {
     RegExpAtom* atom = parse_result.tree->AsAtom();
     Vector<const uc16> atom_pattern = atom->data();
-    Handle<String> atom_string;
-    ASSIGN_RETURN_ON_EXCEPTION(
-        isolate, atom_string,
-        isolate->factory()->NewStringFromTwoByte(atom_pattern),
-        Object);
-    if (!HasFewDifferentCharacters(atom_string)) {
+    if (atom_pattern.length() <= kPatternTooShortForBoyerMoore) {
+      Handle<String> atom_string;
+      ASSIGN_RETURN_ON_EXCEPTION(
+          isolate, atom_string,
+          isolate->factory()->NewStringFromTwoByte(atom_pattern), Object);
       AtomCompile(re, pattern, flags, atom_string);
       has_been_compiled = true;
     }
@@ -237,8 +210,8 @@ int RegExpImpl::AtomExecRaw(Handle<JSRegExp> regexp,
                             int output_size) {
   Isolate* isolate = regexp->GetIsolate();
 
-  DCHECK(0 <= index);
-  DCHECK(index <= subject->length());
+  DCHECK_LE(0, index);
+  DCHECK_LE(index, subject->length());
 
   subject = String::Flatten(subject);
   DisallowHeapAllocation no_gc;  // ensure vectors stay valid
@@ -319,15 +292,6 @@ bool RegExpImpl::EnsureCompiledIrregexp(Handle<JSRegExp> re,
 #else  // V8_INTERPRETED_REGEXP (RegExp native code)
   if (compiled_code->IsCode()) return true;
 #endif
-  // We could potentially have marked this as flushable, but have kept
-  // a saved version if we did not flush it yet.
-  Object* saved_code = re->DataAt(JSRegExp::saved_code_index(is_one_byte));
-  if (saved_code->IsCode()) {
-    // Reinstate the code in the original place.
-    re->SetDataAt(JSRegExp::code_index(is_one_byte), saved_code);
-    DCHECK(compiled_code->IsSmi());
-    return true;
-  }
   return CompileIrregexp(re, sample_subject, is_one_byte);
 }
 
@@ -339,28 +303,14 @@ bool RegExpImpl::CompileIrregexp(Handle<JSRegExp> re,
   Isolate* isolate = re->GetIsolate();
   Zone zone(isolate->allocator(), ZONE_NAME);
   PostponeInterruptsScope postpone(isolate);
-  // If we had a compilation error the last time this is saved at the
-  // saved code index.
+#ifdef DEBUG
   Object* entry = re->DataAt(JSRegExp::code_index(is_one_byte));
-  // When arriving here entry can only be a smi, either representing an
-  // uncompiled regexp, a previous compilation error, or code that has
-  // been flushed.
+  // When arriving here entry can only be a smi representing an uncompiled
+  // regexp.
   DCHECK(entry->IsSmi());
-  int entry_value = Smi::cast(entry)->value();
-  DCHECK(entry_value == JSRegExp::kUninitializedValue ||
-         entry_value == JSRegExp::kCompilationErrorValue ||
-         (entry_value < JSRegExp::kCodeAgeMask && entry_value >= 0));
-
-  if (entry_value == JSRegExp::kCompilationErrorValue) {
-    // A previous compilation failed and threw an error which we store in
-    // the saved code index (we store the error message, not the actual
-    // error). Recreate the error object and throw it.
-    Object* error_string = re->DataAt(JSRegExp::saved_code_index(is_one_byte));
-    DCHECK(error_string->IsString());
-    Handle<String> error_message(String::cast(error_string));
-    ThrowRegExpException(re, error_message);
-    return false;
-  }
+  int entry_value = Smi::ToInt(entry);
+  DCHECK_EQ(JSRegExp::kUninitializedValue, entry_value);
+#endif
 
   JSRegExp::Flags flags = re->GetFlags();
 
@@ -418,12 +368,12 @@ void RegExpImpl::SetIrregexpCaptureNameMap(FixedArray* re,
 }
 
 int RegExpImpl::IrregexpNumberOfCaptures(FixedArray* re) {
-  return Smi::cast(re->get(JSRegExp::kIrregexpCaptureCountIndex))->value();
+  return Smi::ToInt(re->get(JSRegExp::kIrregexpCaptureCountIndex));
 }
 
 
 int RegExpImpl::IrregexpNumberOfRegisters(FixedArray* re) {
-  return Smi::cast(re->get(JSRegExp::kIrregexpMaxRegisterCountIndex))->value();
+  return Smi::ToInt(re->get(JSRegExp::kIrregexpMaxRegisterCountIndex));
 }
 
 
@@ -482,8 +432,8 @@ int RegExpImpl::IrregexpExecRaw(Handle<JSRegExp> regexp,
 
   Handle<FixedArray> irregexp(FixedArray::cast(regexp->data()), isolate);
 
-  DCHECK(index >= 0);
-  DCHECK(index <= subject->length());
+  DCHECK_LE(0, index);
+  DCHECK_LE(index, subject->length());
   DCHECK(subject->IsFlat());
 
   bool is_one_byte = subject->IsOneByteRepresentationUnderneath();
@@ -692,7 +642,7 @@ RegExpImpl::GlobalCache::GlobalCache(Handle<JSRegExp> regexp,
   // to the compiled regexp.
   current_match_index_ = max_matches_ - 1;
   num_matches_ = max_matches_;
-  DCHECK(registers_per_match_ >= 2);  // Each match has at least one capture.
+  DCHECK_LE(2, registers_per_match_);  // Each match has at least one capture.
   DCHECK_GE(register_array_size_, registers_per_match_);
   int32_t* last_match =
       &register_array_[current_match_index_ * registers_per_match_];
@@ -998,7 +948,7 @@ class RegExpCompiler {
   inline void AddWork(RegExpNode* node) {
     if (!node->on_work_list() && !node->label()->is_bound()) {
       node->set_on_work_list(true);
-      work_list_->Add(node);
+      work_list_->push_back(node);
     }
   }
 
@@ -1049,7 +999,7 @@ class RegExpCompiler {
   int next_register_;
   int unicode_lookaround_stack_register_;
   int unicode_lookaround_position_register_;
-  List<RegExpNode*>* work_list_;
+  std::vector<RegExpNode*>* work_list_;
   int recursion_depth_;
   RegExpMacroAssembler* macro_assembler_;
   JSRegExp::Flags flags_;
@@ -1101,7 +1051,7 @@ RegExpCompiler::RegExpCompiler(Isolate* isolate, Zone* zone, int capture_count,
       isolate_(isolate),
       zone_(zone) {
   accept_ = new(zone) EndNode(EndNode::ACCEPT, zone);
-  DCHECK(next_register_ - 1 <= RegExpMacroAssembler::kMaxRegister);
+  DCHECK_GE(RegExpMacroAssembler::kMaxRegister, next_register_ - 1);
 }
 
 
@@ -1119,7 +1069,7 @@ RegExpEngine::CompilationResult RegExpCompiler::Assemble(
 #endif
     macro_assembler_ = macro_assembler;
 
-  List <RegExpNode*> work_list(0);
+  std::vector<RegExpNode*> work_list;
   work_list_ = &work_list;
   Label fail;
   macro_assembler_->PushBacktrack(&fail);
@@ -1127,8 +1077,9 @@ RegExpEngine::CompilationResult RegExpCompiler::Assemble(
   start->Emit(this, &new_trace);
   macro_assembler_->Bind(&fail);
   macro_assembler_->Fail();
-  while (!work_list.is_empty()) {
-    RegExpNode* node = work_list.RemoveLast();
+  while (!work_list.empty()) {
+    RegExpNode* node = work_list.back();
+    work_list.pop_back();
     node->set_on_work_list(false);
     if (!node->label()->is_bound()) node->Emit(this, &new_trace);
   }
@@ -1140,7 +1091,7 @@ RegExpEngine::CompilationResult RegExpCompiler::Assemble(
   Handle<HeapObject> code = macro_assembler_->GetCode(pattern);
   isolate->IncreaseTotalRegexpCodeGenerated(code->Size());
   work_list_ = NULL;
-#ifdef ENABLE_DISASSEMBLER
+#if defined(ENABLE_DISASSEMBLER) && !defined(V8_INTERPRETED_REGEXP)
   if (FLAG_print_code) {
     CodeTracer::Scope trace_scope(isolate->GetCodeTracer());
     OFStream os(trace_scope.file());
@@ -1277,7 +1228,7 @@ void Trace::PerformDeferredActions(RegExpMacroAssembler* assembler,
             }
             // SET_REGISTER is currently only used for newly introduced loop
             // counters. They can have a significant previous value if they
-            // occour in a loop. TODO(lrn): Propagate this information, so
+            // occur in a loop. TODO(lrn): Propagate this information, so
             // we can set undo_action to IGNORE if we know there is no value to
             // restore.
             undo_action = RESTORE;
@@ -1757,7 +1708,7 @@ static inline bool EmitAtomLetter(Isolate* isolate,
     macro_assembler->LoadCurrentCharacter(cp_offset, on_failure, check);
   }
   Label ok;
-  DCHECK(unibrow::Ecma262UnCanonicalize::kMaxWidth == 4);
+  DCHECK_EQ(4, unibrow::Ecma262UnCanonicalize::kMaxWidth);
   switch (length) {
     case 2: {
       if (ShortCutEmitCharacterPair(macro_assembler, one_byte, chars[0],
@@ -2977,7 +2928,7 @@ void ChoiceNode::GetQuickCheckDetails(QuickCheckDetails* details,
                                       bool not_at_start) {
   not_at_start = (not_at_start || not_at_start_);
   int choice_count = alternatives_->length();
-  DCHECK(choice_count > 0);
+  DCHECK_LT(0, choice_count);
   alternatives_->at(0).node()->GetQuickCheckDetails(details,
                                                     compiler,
                                                     characters_filled_in,
@@ -3054,6 +3005,8 @@ static void EmitHat(RegExpCompiler* compiler,
   on_success->Emit(compiler, &new_trace);
 }
 
+// More makes code generation slower, less makes V8 benchmark score lower.
+const int kMaxLookaheadForBoyerMoore = 8;
 
 // Emit the code to handle \b and \B (word-boundary or non-word-boundary).
 void AssertionNode::EmitBoundaryCheck(RegExpCompiler* compiler, Trace* trace) {
@@ -3303,7 +3256,7 @@ void TextNode::TextEmitPass(RegExpCompiler* compiler,
 
 int TextNode::Length() {
   TextElement elm = elements()->last();
-  DCHECK(elm.cp_offset() >= 0);
+  DCHECK_LE(0, elm.cp_offset());
   return elm.cp_offset() + elm.length();
 }
 
@@ -3522,7 +3475,7 @@ void LoopChoiceNode::Emit(RegExpCompiler* compiler, Trace* trace) {
     // Back edge of greedy optimized loop node graph.
     int text_length =
         GreedyLoopTextLengthForAlternative(&(alternatives_->at(0)));
-    DCHECK(text_length != kNodeIsTooComplexForGreedyLoops);
+    DCHECK_NE(kNodeIsTooComplexForGreedyLoops, text_length);
     // Update the counter-based backtracking info on the stack.  This is an
     // optimization for greedy loops (see below).
     DCHECK(trace->cp_offset() == text_length);
@@ -3843,7 +3796,7 @@ void BoyerMooreLookahead::EmitSkipInstructions(RegExpMacroAssembler* masm) {
   Handle<ByteArray> boolean_skip_table = factory->NewByteArray(kSize, TENURED);
   int skip_distance = GetSkipTable(
       min_lookahead, max_lookahead, boolean_skip_table);
-  DCHECK(skip_distance != 0);
+  DCHECK_NE(0, skip_distance);
 
   Label cont, again;
   masm->Bind(&again);
@@ -4798,10 +4751,10 @@ static bool CompareInverseRanges(ZoneList<CharacterRange>* ranges,
                                  const int* special_class,
                                  int length) {
   length--;  // Remove final marker.
-  DCHECK(special_class[length] == kRangeEndMarker);
-  DCHECK(ranges->length() != 0);
-  DCHECK(length != 0);
-  DCHECK(special_class[0] != 0);
+  DCHECK_EQ(kRangeEndMarker, special_class[length]);
+  DCHECK_NE(0, ranges->length());
+  DCHECK_NE(0, length);
+  DCHECK_NE(0, special_class[0]);
   if (ranges->length() != (length >> 1) + 1) {
     return false;
   }
@@ -4829,7 +4782,7 @@ static bool CompareRanges(ZoneList<CharacterRange>* ranges,
                           const int* special_class,
                           int length) {
   length--;  // Remove final marker.
-  DCHECK(special_class[length] == kRangeEndMarker);
+  DCHECK_EQ(kRangeEndMarker, special_class[length]);
   if (ranges->length() * 2 != length) {
     return false;
   }
@@ -5111,6 +5064,16 @@ RegExpNode* UnanchoredAdvance(RegExpCompiler* compiler,
 
 void AddUnicodeCaseEquivalents(ZoneList<CharacterRange>* ranges, Zone* zone) {
 #ifdef V8_INTL_SUPPORT
+  DCHECK(CharacterRange::IsCanonical(ranges));
+
+  // Micro-optimization to avoid passing large ranges to UnicodeSet::closeOver.
+  // See also https://crbug.com/v8/6727.
+  // TODO(jgruber): This only covers the special case of the {0,0x10FFFF} range,
+  // which we use frequently internally. But large ranges can also easily be
+  // created by the user. We might want to have a more general caching mechanism
+  // for such ranges.
+  if (ranges->length() == 1 && ranges->at(0).IsEverything(kNonBmpEnd)) return;
+
   // Use ICU to compute the case fold closure over the ranges.
   icu::UnicodeSet set;
   for (int i = 0; i < ranges->length(); i++) {
@@ -5456,7 +5419,7 @@ class RegExpExpansionLimiter {
       : compiler_(compiler),
         saved_expansion_factor_(compiler->current_expansion_factor()),
         ok_to_expand_(saved_expansion_factor_ <= kMaxExpansionFactor) {
-    DCHECK(factor > 0);
+    DCHECK_LT(0, factor);
     if (ok_to_expand_) {
       if (factor > kMaxExpansionFactor) {
         // Avoid integer overflow of the current expansion factor.
@@ -5545,7 +5508,7 @@ RegExpNode* RegExpQuantifier::ToNode(int min,
       }
     }
     if (max <= kMaxUnrolledMaxMatches && min == 0) {
-      DCHECK(max > 0);  // Due to the 'if' above.
+      DCHECK_LT(0, max);  // Due to the 'if' above.
       RegExpExpansionLimiter limiter(compiler, max);
       if (limiter.ok_to_expand()) {
         // Unroll the optional matches up to max.
@@ -5842,7 +5805,7 @@ static void AddClass(const int* elmv,
                      ZoneList<CharacterRange>* ranges,
                      Zone* zone) {
   elmc--;
-  DCHECK(elmv[elmc] == kRangeEndMarker);
+  DCHECK_EQ(kRangeEndMarker, elmv[elmc]);
   for (int i = 0; i < elmc; i += 2) {
     DCHECK(elmv[i] < elmv[i + 1]);
     ranges->Add(CharacterRange::Range(elmv[i], elmv[i + 1] - 1), zone);
@@ -5855,9 +5818,9 @@ static void AddClassNegated(const int *elmv,
                             ZoneList<CharacterRange>* ranges,
                             Zone* zone) {
   elmc--;
-  DCHECK(elmv[elmc] == kRangeEndMarker);
-  DCHECK(elmv[0] != 0x0000);
-  DCHECK(elmv[elmc - 1] != String::kMaxCodePoint);
+  DCHECK_EQ(kRangeEndMarker, elmv[elmc]);
+  DCHECK_NE(0x0000, elmv[0]);
+  DCHECK_NE(String::kMaxCodePoint, elmv[elmc - 1]);
   uc16 last = 0x0000;
   for (int i = 0; i < elmc; i += 2) {
     DCHECK(last <= elmv[i] - 1);
@@ -5868,7 +5831,7 @@ static void AddClassNegated(const int *elmv,
   ranges->Add(CharacterRange::Range(last, String::kMaxCodePoint), zone);
 }
 
-void CharacterRange::AddClassEscape(uc16 type, ZoneList<CharacterRange>* ranges,
+void CharacterRange::AddClassEscape(char type, ZoneList<CharacterRange>* ranges,
                                     bool add_unicode_case_equivalents,
                                     Zone* zone) {
   if (add_unicode_case_equivalents && (type == 'w' || type == 'W')) {
@@ -5891,7 +5854,7 @@ void CharacterRange::AddClassEscape(uc16 type, ZoneList<CharacterRange>* ranges,
   AddClassEscape(type, ranges, zone);
 }
 
-void CharacterRange::AddClassEscape(uc16 type, ZoneList<CharacterRange>* ranges,
+void CharacterRange::AddClassEscape(char type, ZoneList<CharacterRange>* ranges,
                                     Zone* zone) {
   switch (type) {
     case 's':
@@ -6785,9 +6748,6 @@ RegExpEngine::CompilationResult RegExpEngine::Compile(
 #elif V8_TARGET_ARCH_MIPS64
   RegExpMacroAssemblerMIPS macro_assembler(isolate, zone, mode,
                                            (data->capture_count + 1) * 2);
-#elif V8_TARGET_ARCH_X87
-  RegExpMacroAssemblerX87 macro_assembler(isolate, zone, mode,
-                                          (data->capture_count + 1) * 2);
 #else
 #error "Unsupported architecture"
 #endif

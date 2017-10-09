@@ -33,6 +33,12 @@ namespace wasm {
 #define TRACE_IF(...)
 #endif
 
+// A {DecodeResult} only stores the failure / success status, but no data. Thus
+// we use {nullptr_t} as data value, such that the only valid data stored in
+// this type is a nullptr.
+// Storing {void} would require template specialization.
+using DecodeResult = Result<std::nullptr_t>;
+
 // A helper utility to decode bytes, integers, fields, varints, etc, from
 // a buffer of bytes.
 class Decoder {
@@ -139,8 +145,7 @@ class Decoder {
   // Consume {size} bytes and send them to the bit bucket, advancing {pc_}.
   void consume_bytes(uint32_t size, const char* name = "skip") {
     // Only trace if the name is not null.
-    TRACE_IF(name, "  +%d  %-20s: %d bytes\n", static_cast<int>(pc_ - start_),
-             name, size);
+    TRACE_IF(name, "  +%u  %-20s: %u bytes\n", pc_offset(), name, size);
     if (checkAvailable(size)) {
       pc_ += size;
     } else {
@@ -149,13 +154,13 @@ class Decoder {
   }
 
   // Check that at least {size} bytes exist between {pc_} and {end_}.
-  bool checkAvailable(int size) {
-    intptr_t pc_overflow_value = std::numeric_limits<intptr_t>::max() - size;
-    if (size < 0 || (intptr_t)pc_ > pc_overflow_value) {
-      errorf(pc_, "reading %d bytes would underflow/overflow", size);
+  bool checkAvailable(uint32_t size) {
+    uintptr_t pc_overflow_value = std::numeric_limits<uintptr_t>::max() - size;
+    if ((uintptr_t)pc_ > pc_overflow_value) {
+      errorf(pc_, "reading %u bytes would underflow/overflow", size);
       return false;
     } else if (pc_ < start_ || end_ < (pc_ + size)) {
-      errorf(pc_, "expected %d bytes, fell off end", size);
+      errorf(pc_, "expected %u bytes, fell off end", size);
       return false;
     } else {
       return true;
@@ -268,7 +273,7 @@ class Decoder {
 
   template <typename IntType>
   inline IntType consume_little_endian(const char* name) {
-    TRACE("  +%d  %-20s: ", static_cast<int>(pc_ - start_), name);
+    TRACE("  +%u  %-20s: ", pc_offset(), name);
     if (!checkAvailable(sizeof(IntType))) {
       traceOffEnd();
       pc_ = end_;
@@ -285,7 +290,7 @@ class Decoder {
   inline IntType read_leb(const byte* pc, uint32_t* length,
                           const char* name = "varint") {
     DCHECK_IMPLIES(advance_pc, pc == pc_);
-    TRACE_IF(trace, "  +%d  %-20s: ", static_cast<int>(pc - start_), name);
+    TRACE_IF(trace, "  +%u  %-20s: ", pc_offset(), name);
     return read_leb_tail<IntType, checked, advance_pc, trace, 0>(pc, length,
                                                                  name, 0);
   }
@@ -302,7 +307,7 @@ class Decoder {
     const bool at_end = checked && pc >= end_;
     byte b = 0;
     if (!at_end) {
-      DCHECK_LT(pc_, end_);
+      DCHECK_LT(pc, end_);
       b = *pc;
       TRACE_IF(trace, "%02x ", b);
       result = result | ((static_cast<IntType>(b) & 0x7f) << shift);
@@ -344,7 +349,7 @@ class Decoder {
       }
     }
     constexpr int sign_ext_shift =
-        is_signed && !is_last_byte ? 8 * sizeof(IntType) - shift - 7 : 0;
+        is_signed ? Max(0, int{8 * sizeof(IntType)} - shift - 7) : 0;
     // Perform sign extension.
     result = (result << sign_ext_shift) >> sign_ext_shift;
     if (trace && is_signed) {
@@ -354,6 +359,27 @@ class Decoder {
     }
     return result;
   }
+};
+
+// Reference to a string in the wire bytes.
+class WireBytesRef {
+ public:
+  WireBytesRef() : WireBytesRef(0, 0) {}
+  WireBytesRef(uint32_t offset, uint32_t length)
+      : offset_(offset), length_(length) {
+    DCHECK_IMPLIES(offset_ == 0, length_ == 0);
+    DCHECK_LE(offset_, offset_ + length_);  // no uint32_t overflow.
+  }
+
+  uint32_t offset() const { return offset_; }
+  uint32_t length() const { return length_; }
+  uint32_t end_offset() const { return offset_ + length_; }
+  bool is_empty() const { return length_ == 0; }
+  bool is_set() const { return offset_ != 0; }
+
+ private:
+  uint32_t offset_;
+  uint32_t length_;
 };
 
 #undef TRACE

@@ -63,7 +63,7 @@ void PropertyHandlerCompiler::GenerateDictionaryNegativeLookup(
     MacroAssembler* masm, Label* miss_label, Register receiver,
     Handle<Name> name, Register scratch0, Register scratch1) {
   DCHECK(name->IsUniqueName());
-  DCHECK(!receiver.is(scratch0));
+  DCHECK(receiver != scratch0);
   Counters* counters = masm->isolate()->counters();
   __ IncrementCounter(counters->negative_lookups(), 1);
   __ IncrementCounter(counters->negative_lookups_miss(), 1);
@@ -84,7 +84,7 @@ void PropertyHandlerCompiler::GenerateDictionaryNegativeLookup(
 
   // Load properties array.
   Register properties = scratch0;
-  __ mov(properties, FieldOperand(receiver, JSObject::kPropertiesOffset));
+  __ mov(properties, FieldOperand(receiver, JSObject::kPropertiesOrHashOffset));
 
   // Check that the properties array is a dictionary.
   __ cmp(FieldOperand(properties, HeapObject::kMapOffset),
@@ -107,7 +107,7 @@ void PropertyHandlerCompiler::GenerateApiAccessorCall(
     Handle<Map> receiver_map, Register receiver, Register scratch,
     bool is_store, Register store_parameter, Register accessor_holder,
     int accessor_index) {
-  DCHECK(!accessor_holder.is(scratch));
+  DCHECK(accessor_holder != scratch);
   // Copy return value.
   __ pop(scratch);
 
@@ -117,6 +117,7 @@ void PropertyHandlerCompiler::GenerateApiAccessorCall(
                           kPointerSize));
   }
   // Write the receiver and arguments to stack frame.
+  __ push(accessor_holder);
   __ push(receiver);
   if (is_store) {
     DCHECK(!AreAliased(receiver, scratch, store_parameter));
@@ -139,9 +140,7 @@ void PropertyHandlerCompiler::GenerateApiAccessorCall(
 
   // Put holder in place.
   CallOptimization::HolderLookup holder_lookup;
-  int holder_depth = 0;
-  optimization.LookupHolderOfExpectedType(receiver_map, &holder_lookup,
-                                          &holder_depth);
+  optimization.LookupHolderOfExpectedType(receiver_map, &holder_lookup);
   switch (holder_lookup) {
     case CallOptimization::kHolderIsReceiver:
       __ Move(holder, receiver);
@@ -149,10 +148,6 @@ void PropertyHandlerCompiler::GenerateApiAccessorCall(
     case CallOptimization::kHolderFound:
       __ mov(holder, FieldOperand(receiver, HeapObject::kMapOffset));
       __ mov(holder, FieldOperand(holder, Map::kPrototypeOffset));
-      for (int i = 1; i < holder_depth; i++) {
-        __ mov(holder, FieldOperand(holder, HeapObject::kMapOffset));
-        __ mov(holder, FieldOperand(holder, Map::kPrototypeOffset));
-      }
       break;
     case CallOptimization::kHolderNotFound:
       UNREACHABLE();
@@ -223,9 +218,9 @@ void NamedStoreHandlerCompiler::GenerateStoreViaSetter(
     __ push(value());
 
     if (accessor_index >= 0) {
-      DCHECK(!holder.is(scratch));
-      DCHECK(!receiver.is(scratch));
-      DCHECK(!value().is(scratch));
+      DCHECK(holder != scratch);
+      DCHECK(receiver != scratch);
+      DCHECK(value() != scratch);
       // Call the JavaScript setter with receiver and value on the stack.
       if (map->IsJSGlobalObjectMap()) {
         __ mov(scratch,
@@ -301,16 +296,16 @@ Register PropertyHandlerCompiler::CheckPrototypes(
   Handle<Map> receiver_map = map();
 
   // Make sure there's no overlap between holder and object registers.
-  DCHECK(!scratch1.is(object_reg) && !scratch1.is(holder_reg));
-  DCHECK(!scratch2.is(object_reg) && !scratch2.is(holder_reg) &&
-         !scratch2.is(scratch1));
+  DCHECK(scratch1 != object_reg && scratch1 != holder_reg);
+  DCHECK(scratch2 != object_reg && scratch2 != holder_reg &&
+         scratch2 != scratch1);
 
   Handle<Cell> validity_cell =
       Map::GetOrCreatePrototypeChainValidityCell(receiver_map, isolate());
   if (!validity_cell.is_null()) {
     DCHECK_EQ(Smi::FromInt(Map::kPrototypeChainValid), validity_cell->value());
-    // Operand::ForCell(...) points to the cell's payload!
-    __ cmp(Operand::ForCell(validity_cell),
+    __ mov(scratch1, validity_cell);
+    __ cmp(FieldOperand(scratch1, Cell::kValueOffset),
            Immediate(Smi::FromInt(Map::kPrototypeChainValid)));
     __ j(not_equal, miss);
   }
@@ -378,11 +373,11 @@ void NamedLoadHandlerCompiler::FrontendFooter(Handle<Name> name, Label* miss) {
     Label success;
     __ jmp(&success);
     __ bind(miss);
-    if (IC::ShouldPushPopSlotAndVector(kind())) {
-      DCHECK(kind() == Code::LOAD_IC);
+    if (ShouldPushPopSlotAndVector()) {
+      DCHECK_EQ(LOAD, type());
       PopVectorAndSlot();
     }
-    TailCallBuiltin(masm(), MissBuiltin(kind()));
+    TailCallBuiltin(masm(), Builtins::kLoadIC_Miss);
     __ bind(&success);
   }
 }
@@ -393,8 +388,8 @@ void NamedStoreHandlerCompiler::FrontendFooter(Handle<Name> name, Label* miss) {
     Label success;
     __ jmp(&success);
     GenerateRestoreName(miss, name);
-    DCHECK(!IC::ShouldPushPopSlotAndVector(kind()));
-    TailCallBuiltin(masm(), MissBuiltin(kind()));
+    DCHECK(!ShouldPushPopSlotAndVector());
+    TailCallBuiltin(masm(), Builtins::kStoreIC_Miss);
     __ bind(&success);
   }
 }
@@ -438,7 +433,7 @@ Handle<Code> NamedStoreHandlerCompiler::CompileStoreCallback(
   __ TailCallRuntime(Runtime::kStoreCallbackProperty);
 
   // Return the generated code.
-  return GetCode(kind(), name);
+  return GetCode(name);
 }
 
 

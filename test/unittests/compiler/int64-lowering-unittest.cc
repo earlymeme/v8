@@ -7,6 +7,7 @@
 #include "src/compiler/linkage.h"
 #include "src/compiler/machine-operator.h"
 #include "src/compiler/node.h"
+#include "src/compiler/wasm-compiler.h"
 
 #include "src/compiler/node-properties.h"
 
@@ -297,11 +298,11 @@ TEST_F(Int64LoweringTest, TruncateInt64ToInt32) {
 }
 
 TEST_F(Int64LoweringTest, Parameter) {
-  LowerGraph(Parameter(0), MachineRepresentation::kWord64,
+  LowerGraph(Parameter(1), MachineRepresentation::kWord64,
              MachineRepresentation::kWord64, 1);
 
   EXPECT_THAT(graph()->end()->InputAt(1),
-              IsReturn2(IsParameter(0), IsParameter(1), start(), start()));
+              IsReturn2(IsParameter(1), IsParameter(2), start(), start()));
 }
 
 TEST_F(Int64LoweringTest, Parameter2) {
@@ -315,26 +316,32 @@ TEST_F(Int64LoweringTest, Parameter2) {
   sig_builder.AddParam(MachineRepresentation::kWord32);
 
   int start_parameter = start()->op()->ValueOutputCount();
-  LowerGraph(Parameter(4), sig_builder.Build());
+  LowerGraph(Parameter(5), sig_builder.Build());
 
   EXPECT_THAT(graph()->end()->InputAt(1),
-              IsReturn(IsParameter(6), start(), start()));
+              IsReturn(IsParameter(7), start(), start()));
   // The parameter of the start node should increase by 2, because we lowered
   // two parameter nodes.
   EXPECT_THAT(start()->op()->ValueOutputCount(), start_parameter + 2);
 }
 
+// The following tests assume that pointers are 32 bit and therefore pointers do
+// not get lowered. This assumption does not hold on 64 bit platforms, which
+// invalidates these tests.
+// TODO(wasm): We can find an alternative to re-activate these tests.
+#if V8_TARGET_ARCH_32_BIT
 TEST_F(Int64LoweringTest, CallI64Return) {
   int32_t function = 0x9999;
+  Node* context_address = Int32Constant(0);
 
   Signature<MachineRepresentation>::Builder sig_builder(zone(), 1, 0);
   sig_builder.AddReturn(MachineRepresentation::kWord64);
 
   compiler::CallDescriptor* desc =
-      wasm::ModuleEnv::GetWasmCallDescriptor(zone(), sig_builder.Build());
+      compiler::GetWasmCallDescriptor(zone(), sig_builder.Build());
 
   LowerGraph(graph()->NewNode(common()->Call(desc), Int32Constant(function),
-                              start(), start()),
+                              context_address, start(), start()),
              MachineRepresentation::kWord64);
 
   Capture<Node*> call;
@@ -349,11 +356,12 @@ TEST_F(Int64LoweringTest, CallI64Return) {
   CompareCallDescriptors(
       OpParameter<const CallDescriptor*>(
           graph()->end()->InputAt(1)->InputAt(1)->InputAt(0)),
-      wasm::ModuleEnv::GetI32WasmCallDescriptor(zone(), desc));
+      compiler::GetI32WasmCallDescriptor(zone(), desc));
 }
 
 TEST_F(Int64LoweringTest, CallI64Parameter) {
   int32_t function = 0x9999;
+  Node* context_address = Int32Constant(0);
 
   Signature<MachineRepresentation>::Builder sig_builder(zone(), 1, 3);
   sig_builder.AddReturn(MachineRepresentation::kWord32);
@@ -362,17 +370,17 @@ TEST_F(Int64LoweringTest, CallI64Parameter) {
   sig_builder.AddParam(MachineRepresentation::kWord64);
 
   compiler::CallDescriptor* desc =
-      wasm::ModuleEnv::GetWasmCallDescriptor(zone(), sig_builder.Build());
+      compiler::GetWasmCallDescriptor(zone(), sig_builder.Build());
 
   LowerGraph(graph()->NewNode(common()->Call(desc), Int32Constant(function),
-                              Int64Constant(value(0)),
+                              context_address, Int64Constant(value(0)),
                               Int32Constant(low_word_value(1)),
                               Int64Constant(value(2)), start(), start()),
              MachineRepresentation::kWord32);
 
   EXPECT_THAT(
       graph()->end()->InputAt(1),
-      IsReturn(IsCall(testing::_, IsInt32Constant(function),
+      IsReturn(IsCall(testing::_, IsInt32Constant(function), context_address,
                       IsInt32Constant(low_word_value(0)),
                       IsInt32Constant(high_word_value(0)),
                       IsInt32Constant(low_word_value(1)),
@@ -380,10 +388,9 @@ TEST_F(Int64LoweringTest, CallI64Parameter) {
                       IsInt32Constant(high_word_value(2)), start(), start()),
                start(), start()));
 
-  CompareCallDescriptors(
-      OpParameter<const CallDescriptor*>(
-          graph()->end()->InputAt(1)->InputAt(1)),
-      wasm::ModuleEnv::GetI32WasmCallDescriptor(zone(), desc));
+  CompareCallDescriptors(OpParameter<const CallDescriptor*>(
+                             graph()->end()->InputAt(1)->InputAt(1)),
+                         compiler::GetI32WasmCallDescriptor(zone(), desc));
 }
 
 TEST_F(Int64LoweringTest, Int64Add) {
@@ -401,6 +408,7 @@ TEST_F(Int64LoweringTest, Int64Add) {
                         IsProjection(1, AllOf(CaptureEq(&add), add_matcher)),
                         start(), start()));
 }
+#endif
 
 TEST_F(Int64LoweringTest, Int64Sub) {
   LowerGraph(graph()->NewNode(machine()->Int64Sub(), Int64Constant(value(0)),

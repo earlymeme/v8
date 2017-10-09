@@ -58,6 +58,7 @@ class IsolateData : public v8_inspector::V8InspectorClient {
                           bool recurring);
   void AsyncTaskStarted(void* task);
   void AsyncTaskFinished(void* task);
+  void AddInspectedObject(int session_id, v8::Local<v8::Value> object);
 
   // Test utilities.
   void SetCurrentTimeMS(double time);
@@ -67,6 +68,7 @@ class IsolateData : public v8_inspector::V8InspectorClient {
   void DumpAsyncTaskStacksStateForTest();
   void FireContextCreated(v8::Local<v8::Context> context, int context_group_id);
   void FireContextDestroyed(v8::Local<v8::Context> context);
+  void FreeContext(v8::Local<v8::Context> context);
 
  private:
   struct VectorCompare {
@@ -83,6 +85,9 @@ class IsolateData : public v8_inspector::V8InspectorClient {
       v8::Local<v8::Module> referrer);
   static void MessageHandler(v8::Local<v8::Message> message,
                              v8::Local<v8::Value> exception);
+  static void PromiseRejectHandler(v8::PromiseRejectMessage data);
+  static int HandleMessage(v8::Local<v8::Message> message,
+                           v8::Local<v8::Value> exception);
   std::vector<int> GetSessionIds(int context_group_id);
 
   // V8InspectorClient implementation.
@@ -100,6 +105,7 @@ class IsolateData : public v8_inspector::V8InspectorClient {
                          const v8_inspector::StringView& url,
                          unsigned lineNumber, unsigned columnNumber,
                          v8_inspector::V8StackTrace*) override;
+  bool isInspectableHeapObject(v8::Local<v8::Object>) override;
 
   TaskRunner* task_runner_;
   SetupGlobalTasks setup_global_tasks_;
@@ -117,6 +123,7 @@ class IsolateData : public v8_inspector::V8InspectorClient {
   bool current_time_set_ = false;
   double current_time_ = 0.0;
   bool log_console_api_message_calls_ = false;
+  v8::Global<v8::Private> not_inspectable_private_;
 
   DISALLOW_COPY_AND_ASSIGN(IsolateData);
 };

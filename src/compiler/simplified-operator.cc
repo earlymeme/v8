@@ -8,7 +8,10 @@
 #include "src/compiler/opcodes.h"
 #include "src/compiler/operator.h"
 #include "src/compiler/types.h"
+#include "src/handles-inl.h"
+#include "src/objects-inl.h"
 #include "src/objects/map.h"
+#include "src/objects/name.h"
 
 namespace v8 {
 namespace internal {
@@ -27,63 +30,6 @@ std::ostream& operator<<(std::ostream& os, BaseTaggedness base_taggedness) {
   }
   UNREACHABLE();
 }
-
-
-MachineType BufferAccess::machine_type() const {
-  switch (external_array_type_) {
-    case kExternalUint8Array:
-    case kExternalUint8ClampedArray:
-      return MachineType::Uint8();
-    case kExternalInt8Array:
-      return MachineType::Int8();
-    case kExternalUint16Array:
-      return MachineType::Uint16();
-    case kExternalInt16Array:
-      return MachineType::Int16();
-    case kExternalUint32Array:
-      return MachineType::Uint32();
-    case kExternalInt32Array:
-      return MachineType::Int32();
-    case kExternalFloat32Array:
-      return MachineType::Float32();
-    case kExternalFloat64Array:
-      return MachineType::Float64();
-  }
-  UNREACHABLE();
-}
-
-
-bool operator==(BufferAccess lhs, BufferAccess rhs) {
-  return lhs.external_array_type() == rhs.external_array_type();
-}
-
-
-bool operator!=(BufferAccess lhs, BufferAccess rhs) { return !(lhs == rhs); }
-
-
-size_t hash_value(BufferAccess access) {
-  return base::hash<ExternalArrayType>()(access.external_array_type());
-}
-
-
-std::ostream& operator<<(std::ostream& os, BufferAccess access) {
-  switch (access.external_array_type()) {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
-  case kExternal##Type##Array:                          \
-    return os << #Type;
-    TYPED_ARRAYS(TYPED_ARRAY_CASE)
-#undef TYPED_ARRAY_CASE
-  }
-  UNREACHABLE();
-}
-
-
-BufferAccess const BufferAccessOf(const Operator* op) {
-  DCHECK(op->opcode() == IrOpcode::kLoadBuffer ||
-         op->opcode() == IrOpcode::kStoreBuffer);
-  return OpParameter<BufferAccess>(op);
-}
-
 
 bool operator==(FieldAccess const& lhs, FieldAccess const& rhs) {
   // On purpose we don't include the write barrier kind here, as this method is
@@ -269,6 +215,11 @@ CheckMapsParameters const& CheckMapsParametersOf(Operator const* op) {
   return OpParameter<CheckMapsParameters>(op);
 }
 
+ZoneHandleSet<Map> const& CompareMapsParametersOf(Operator const* op) {
+  DCHECK_EQ(IrOpcode::kCompareMaps, op->opcode());
+  return OpParameter<ZoneHandleSet<Map>>(op);
+}
+
 size_t hash_value(CheckTaggedInputMode mode) {
   return static_cast<size_t>(mode);
 }
@@ -284,33 +235,24 @@ std::ostream& operator<<(std::ostream& os, CheckTaggedInputMode mode) {
 }
 
 CheckTaggedInputMode CheckTaggedInputModeOf(const Operator* op) {
-  DCHECK_EQ(IrOpcode::kCheckedTaggedToFloat64, op->opcode());
+  DCHECK(op->opcode() == IrOpcode::kCheckedTaggedToFloat64 ||
+         op->opcode() == IrOpcode::kCheckedTruncateTaggedToWord32);
   return OpParameter<CheckTaggedInputMode>(op);
 }
 
-std::ostream& operator<<(std::ostream& os, GrowFastElementsFlags flags) {
-  bool empty = true;
-  if (flags & GrowFastElementsFlag::kArrayObject) {
-    os << "ArrayObject";
-    empty = false;
+std::ostream& operator<<(std::ostream& os, GrowFastElementsMode mode) {
+  switch (mode) {
+    case GrowFastElementsMode::kDoubleElements:
+      return os << "DoubleElements";
+    case GrowFastElementsMode::kSmiOrObjectElements:
+      return os << "SmiOrObjectElements";
   }
-  if (flags & GrowFastElementsFlag::kDoubleElements) {
-    if (!empty) os << "|";
-    os << "DoubleElements";
-    empty = false;
-  }
-  if (flags & GrowFastElementsFlag::kHoleyElements) {
-    if (!empty) os << "|";
-    os << "HoleyElements";
-    empty = false;
-  }
-  if (empty) os << "None";
-  return os;
+  UNREACHABLE();
 }
 
-GrowFastElementsFlags GrowFastElementsFlagsOf(const Operator* op) {
+GrowFastElementsMode GrowFastElementsModeOf(const Operator* op) {
   DCHECK_EQ(IrOpcode::kMaybeGrowFastElements, op->opcode());
-  return OpParameter<GrowFastElementsFlags>(op);
+  return OpParameter<GrowFastElementsMode>(op);
 }
 
 bool operator==(ElementsTransition const& lhs, ElementsTransition const& rhs) {
@@ -346,10 +288,61 @@ ElementsTransition const& ElementsTransitionOf(const Operator* op) {
   return OpParameter<ElementsTransition>(op);
 }
 
+namespace {
+
+// Parameters for the TransitionAndStoreElement opcode.
+class TransitionAndStoreElementParameters final {
+ public:
+  TransitionAndStoreElementParameters(Handle<Map> double_map,
+                                      Handle<Map> fast_map);
+
+  Handle<Map> double_map() const { return double_map_; }
+  Handle<Map> fast_map() const { return fast_map_; }
+
+ private:
+  Handle<Map> const double_map_;
+  Handle<Map> const fast_map_;
+};
+
+TransitionAndStoreElementParameters::TransitionAndStoreElementParameters(
+    Handle<Map> double_map, Handle<Map> fast_map)
+    : double_map_(double_map), fast_map_(fast_map) {}
+
+bool operator==(TransitionAndStoreElementParameters const& lhs,
+                TransitionAndStoreElementParameters const& rhs) {
+  return lhs.fast_map().address() == rhs.fast_map().address() &&
+         lhs.double_map().address() == rhs.double_map().address();
+}
+
+size_t hash_value(TransitionAndStoreElementParameters parameters) {
+  return base::hash_combine(parameters.fast_map().address(),
+                            parameters.double_map().address());
+}
+
+std::ostream& operator<<(std::ostream& os,
+                         TransitionAndStoreElementParameters parameters) {
+  return os << "fast-map" << Brief(*parameters.fast_map()) << " double-map"
+            << Brief(*parameters.double_map());
+}
+
+}  // namespace
+
+Handle<Map> DoubleMapParameterOf(const Operator* op) {
+  DCHECK_EQ(IrOpcode::kTransitionAndStoreElement, op->opcode());
+  return OpParameter<TransitionAndStoreElementParameters>(op).double_map();
+}
+
+Handle<Map> FastMapParameterOf(const Operator* op) {
+  DCHECK_EQ(IrOpcode::kTransitionAndStoreElement, op->opcode());
+  return OpParameter<TransitionAndStoreElementParameters>(op).fast_map();
+}
+
 std::ostream& operator<<(std::ostream& os, NumberOperationHint hint) {
   switch (hint) {
     case NumberOperationHint::kSignedSmall:
       return os << "SignedSmall";
+    case NumberOperationHint::kSignedSmallInputs:
+      return os << "SignedSmallInputs";
     case NumberOperationHint::kSigned32:
       return os << "Signed32";
     case NumberOperationHint::kNumber:
@@ -379,7 +372,9 @@ NumberOperationHint NumberOperationHintOf(const Operator* op) {
          op->opcode() == IrOpcode::kSpeculativeNumberBitwiseXor ||
          op->opcode() == IrOpcode::kSpeculativeNumberEqual ||
          op->opcode() == IrOpcode::kSpeculativeNumberLessThan ||
-         op->opcode() == IrOpcode::kSpeculativeNumberLessThanOrEqual);
+         op->opcode() == IrOpcode::kSpeculativeNumberLessThanOrEqual ||
+         op->opcode() == IrOpcode::kSpeculativeSafeIntegerAdd ||
+         op->opcode() == IrOpcode::kSpeculativeSafeIntegerSubtract);
   return OpParameter<NumberOperationHint>(op);
 }
 
@@ -402,6 +397,10 @@ bool operator!=(AllocateParameters const& lhs, AllocateParameters const& rhs) {
 }
 
 PretenureFlag PretenureFlagOf(const Operator* op) {
+  if (op->opcode() == IrOpcode::kNewFastDoubleElements ||
+      op->opcode() == IrOpcode::kNewFastSmiOrObjectElements) {
+    return OpParameter<PretenureFlag>(op);
+  }
   DCHECK_EQ(IrOpcode::kAllocate, op->opcode());
   return OpParameter<AllocateParameters>(op).pretenure();
 }
@@ -412,8 +411,13 @@ Type* AllocateTypeOf(const Operator* op) {
 }
 
 UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
-  DCHECK(op->opcode() == IrOpcode::kStringFromCodePoint);
+  DCHECK_EQ(IrOpcode::kStringFromCodePoint, op->opcode());
   return OpParameter<UnicodeEncoding>(op);
+}
+
+BailoutReason BailoutReasonOf(const Operator* op) {
+  DCHECK_EQ(IrOpcode::kRuntimeAbort, op->opcode());
+  return OpParameter<BailoutReason>(op);
 }
 
 #define PURE_OP_LIST(V)                                          \
@@ -472,8 +476,11 @@ UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
   V(NumberSilenceNaN, Operator::kNoProperties, 1, 0)             \
   V(StringCharAt, Operator::kNoProperties, 2, 1)                 \
   V(StringCharCodeAt, Operator::kNoProperties, 2, 1)             \
+  V(SeqStringCharCodeAt, Operator::kNoProperties, 2, 1)          \
   V(StringFromCharCode, Operator::kNoProperties, 1, 0)           \
   V(StringIndexOf, Operator::kNoProperties, 3, 0)                \
+  V(StringToLowerCaseIntl, Operator::kNoProperties, 1, 0)        \
+  V(StringToUpperCaseIntl, Operator::kNoProperties, 1, 0)        \
   V(PlainPrimitiveToNumber, Operator::kNoProperties, 1, 0)       \
   V(PlainPrimitiveToWord32, Operator::kNoProperties, 1, 0)       \
   V(PlainPrimitiveToFloat64, Operator::kNoProperties, 1, 0)      \
@@ -492,7 +499,10 @@ UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
   V(TruncateTaggedPointerToBit, Operator::kNoProperties, 1, 0)   \
   V(TruncateTaggedToWord32, Operator::kNoProperties, 1, 0)       \
   V(TruncateTaggedToFloat64, Operator::kNoProperties, 1, 0)      \
+  V(ObjectIsArrayBufferView, Operator::kNoProperties, 1, 0)      \
+  V(ObjectIsCallable, Operator::kNoProperties, 1, 0)             \
   V(ObjectIsDetectableCallable, Operator::kNoProperties, 1, 0)   \
+  V(ObjectIsMinusZero, Operator::kNoProperties, 1, 0)            \
   V(ObjectIsNaN, Operator::kNoProperties, 1, 0)                  \
   V(ObjectIsNonCallable, Operator::kNoProperties, 1, 0)          \
   V(ObjectIsNumber, Operator::kNoProperties, 1, 0)               \
@@ -513,30 +523,30 @@ UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
   V(SpeculativeNumberLessThan)                \
   V(SpeculativeNumberLessThanOrEqual)
 
-#define CHECKED_OP_LIST(V)              \
-  V(CheckBounds, 2, 1)                  \
-  V(CheckHeapObject, 1, 1)              \
-  V(CheckIf, 1, 0)                      \
-  V(CheckInternalizedString, 1, 1)      \
-  V(CheckNumber, 1, 1)                  \
-  V(CheckReceiver, 1, 1)                \
-  V(CheckSmi, 1, 1)                     \
-  V(CheckString, 1, 1)                  \
-  V(CheckSymbol, 1, 1)                  \
-  V(CheckTaggedHole, 1, 1)              \
-  V(CheckedInt32Add, 2, 1)              \
-  V(CheckedInt32Sub, 2, 1)              \
-  V(CheckedInt32Div, 2, 1)              \
-  V(CheckedInt32Mod, 2, 1)              \
-  V(CheckedUint32Div, 2, 1)             \
-  V(CheckedUint32Mod, 2, 1)             \
-  V(CheckedUint32ToInt32, 1, 1)         \
-  V(CheckedUint32ToTaggedSigned, 1, 1)  \
-  V(CheckedInt32ToTaggedSigned, 1, 1)   \
-  V(CheckedTaggedSignedToInt32, 1, 1)   \
-  V(CheckedTaggedToTaggedSigned, 1, 1)  \
-  V(CheckedTaggedToTaggedPointer, 1, 1) \
-  V(CheckedTruncateTaggedToWord32, 1, 1)
+#define CHECKED_OP_LIST(V)             \
+  V(CheckBounds, 2, 1)                 \
+  V(CheckHeapObject, 1, 1)             \
+  V(CheckIf, 1, 0)                     \
+  V(CheckInternalizedString, 1, 1)     \
+  V(CheckNumber, 1, 1)                 \
+  V(CheckReceiver, 1, 1)               \
+  V(CheckSmi, 1, 1)                    \
+  V(CheckString, 1, 1)                 \
+  V(CheckSeqString, 1, 1)              \
+  V(CheckSymbol, 1, 1)                 \
+  V(CheckNotTaggedHole, 1, 1)          \
+  V(CheckedInt32Add, 2, 1)             \
+  V(CheckedInt32Sub, 2, 1)             \
+  V(CheckedInt32Div, 2, 1)             \
+  V(CheckedInt32Mod, 2, 1)             \
+  V(CheckedUint32Div, 2, 1)            \
+  V(CheckedUint32Mod, 2, 1)            \
+  V(CheckedUint32ToInt32, 1, 1)        \
+  V(CheckedUint32ToTaggedSigned, 1, 1) \
+  V(CheckedInt32ToTaggedSigned, 1, 1)  \
+  V(CheckedTaggedSignedToInt32, 1, 1)  \
+  V(CheckedTaggedToTaggedSigned, 1, 1) \
+  V(CheckedTaggedToTaggedPointer, 1, 1)
 
 struct SimplifiedOperatorGlobalCache final {
 #define PURE(Name, properties, value_input_count, control_input_count)     \
@@ -579,20 +589,27 @@ struct SimplifiedOperatorGlobalCache final {
   };
   ArrayBufferWasNeuteredOperator kArrayBufferWasNeutered;
 
+  struct LookupHashStorageIndexOperator final : public Operator {
+    LookupHashStorageIndexOperator()
+        : Operator(IrOpcode::kLookupHashStorageIndex, Operator::kEliminatable,
+                   "LookupHashStorageIndex", 2, 1, 1, 1, 1, 0) {}
+  };
+  LookupHashStorageIndexOperator kLookupHashStorageIndex;
+
+  struct LookupSigned32HashStorageIndexOperator final : public Operator {
+    LookupSigned32HashStorageIndexOperator()
+        : Operator(IrOpcode::kLookupSigned32HashStorageIndex,
+                   Operator::kEliminatable, "LookupSigned32HashStorageIndex", 2,
+                   1, 1, 1, 1, 0) {}
+  };
+  LookupSigned32HashStorageIndexOperator kLookupSigned32HashStorageIndex;
+
   struct ArgumentsFrameOperator final : public Operator {
     ArgumentsFrameOperator()
         : Operator(IrOpcode::kArgumentsFrame, Operator::kPure, "ArgumentsFrame",
                    0, 0, 0, 1, 0, 0) {}
   };
   ArgumentsFrameOperator kArgumentsFrame;
-
-  struct NewUnmappedArgumentsElementsOperator final : public Operator {
-    NewUnmappedArgumentsElementsOperator()
-        : Operator(IrOpcode::kNewUnmappedArgumentsElements,
-                   Operator::kEliminatable, "NewUnmappedArgumentsElements", 2,
-                   1, 0, 1, 1, 0) {}
-  };
-  NewUnmappedArgumentsElementsOperator kNewUnmappedArgumentsElements;
 
   template <CheckForMinusZeroMode kMode>
   struct ChangeFloat64ToTaggedOperator final
@@ -663,6 +680,20 @@ struct SimplifiedOperatorGlobalCache final {
   CheckedTaggedToFloat64Operator<CheckTaggedInputMode::kNumberOrOddball>
       kCheckedTaggedToFloat64NumberOrOddballOperator;
 
+  template <CheckTaggedInputMode kMode>
+  struct CheckedTruncateTaggedToWord32Operator final
+      : public Operator1<CheckTaggedInputMode> {
+    CheckedTruncateTaggedToWord32Operator()
+        : Operator1<CheckTaggedInputMode>(
+              IrOpcode::kCheckedTruncateTaggedToWord32,
+              Operator::kFoldable | Operator::kNoThrow,
+              "CheckedTruncateTaggedToWord32", 1, 1, 1, 1, 1, 0, kMode) {}
+  };
+  CheckedTruncateTaggedToWord32Operator<CheckTaggedInputMode::kNumber>
+      kCheckedTruncateTaggedToWord32NumberOperator;
+  CheckedTruncateTaggedToWord32Operator<CheckTaggedInputMode::kNumberOrOddball>
+      kCheckedTruncateTaggedToWord32NumberOrOddballOperator;
+
   template <CheckFloat64HoleMode kMode>
   struct CheckFloat64HoleNaNOperator final
       : public Operator1<CheckFloat64HoleMode> {
@@ -687,6 +718,16 @@ struct SimplifiedOperatorGlobalCache final {
   };
   EnsureWritableFastElementsOperator kEnsureWritableFastElements;
 
+  struct LoadFieldByIndexOperator final : public Operator {
+    LoadFieldByIndexOperator()
+        : Operator(                         // --
+              IrOpcode::kLoadFieldByIndex,  // opcode
+              Operator::kEliminatable,      // flags,
+              "LoadFieldByIndex",           // name
+              2, 1, 1, 1, 1, 0) {}          // counts;
+  };
+  LoadFieldByIndexOperator kLoadFieldByIndex;
+
 #define SPECULATIVE_NUMBER_BINOP(Name)                                      \
   template <NumberOperationHint kHint>                                      \
   struct Name##Operator final : public Operator1<NumberOperationHint> {     \
@@ -697,6 +738,8 @@ struct SimplifiedOperatorGlobalCache final {
   };                                                                        \
   Name##Operator<NumberOperationHint::kSignedSmall>                         \
       k##Name##SignedSmallOperator;                                         \
+  Name##Operator<NumberOperationHint::kSignedSmallInputs>                   \
+      k##Name##SignedSmallInputsOperator;                                   \
   Name##Operator<NumberOperationHint::kSigned32> k##Name##Signed32Operator; \
   Name##Operator<NumberOperationHint::kNumber> k##Name##NumberOperator;     \
   Name##Operator<NumberOperationHint::kNumberOrOddball>                     \
@@ -723,37 +766,13 @@ struct SimplifiedOperatorGlobalCache final {
       kSpeculativeToNumberNumberOperator;
   SpeculativeToNumberOperator<NumberOperationHint::kNumberOrOddball>
       kSpeculativeToNumberNumberOrOddballOperator;
-
-#define BUFFER_ACCESS(Type, type, TYPE, ctype, size)                          \
-  struct LoadBuffer##Type##Operator final : public Operator1<BufferAccess> {  \
-    LoadBuffer##Type##Operator()                                              \
-        : Operator1<BufferAccess>(                                            \
-              IrOpcode::kLoadBuffer,                                          \
-              Operator::kNoDeopt | Operator::kNoThrow | Operator::kNoWrite,   \
-              "LoadBuffer", 3, 1, 1, 1, 1, 0,                                 \
-              BufferAccess(kExternal##Type##Array)) {}                        \
-  };                                                                          \
-  struct StoreBuffer##Type##Operator final : public Operator1<BufferAccess> { \
-    StoreBuffer##Type##Operator()                                             \
-        : Operator1<BufferAccess>(                                            \
-              IrOpcode::kStoreBuffer,                                         \
-              Operator::kNoDeopt | Operator::kNoRead | Operator::kNoThrow,    \
-              "StoreBuffer", 4, 1, 1, 0, 1, 0,                                \
-              BufferAccess(kExternal##Type##Array)) {}                        \
-  };                                                                          \
-  LoadBuffer##Type##Operator kLoadBuffer##Type;                               \
-  StoreBuffer##Type##Operator kStoreBuffer##Type;
-  TYPED_ARRAYS(BUFFER_ACCESS)
-#undef BUFFER_ACCESS
 };
 
-
-static base::LazyInstance<SimplifiedOperatorGlobalCache>::type kCache =
-    LAZY_INSTANCE_INITIALIZER;
-
+static base::LazyInstance<SimplifiedOperatorGlobalCache>::type
+    kSimplifiedOperatorGlobalCache = LAZY_INSTANCE_INITIALIZER;
 
 SimplifiedOperatorBuilder::SimplifiedOperatorBuilder(Zone* zone)
-    : cache_(kCache.Get()), zone_(zone) {}
+    : cache_(kSimplifiedOperatorGlobalCache.Get()), zone_(zone) {}
 
 #define GET_FROM_CACHE(Name, ...) \
   const Operator* SimplifiedOperatorBuilder::Name() { return &cache_.k##Name; }
@@ -761,8 +780,19 @@ PURE_OP_LIST(GET_FROM_CACHE)
 CHECKED_OP_LIST(GET_FROM_CACHE)
 GET_FROM_CACHE(ArrayBufferWasNeutered)
 GET_FROM_CACHE(ArgumentsFrame)
-GET_FROM_CACHE(NewUnmappedArgumentsElements)
+GET_FROM_CACHE(LookupHashStorageIndex)
+GET_FROM_CACHE(LookupSigned32HashStorageIndex)
+GET_FROM_CACHE(LoadFieldByIndex)
 #undef GET_FROM_CACHE
+
+const Operator* SimplifiedOperatorBuilder::RuntimeAbort(BailoutReason reason) {
+  return new (zone()) Operator1<BailoutReason>(  // --
+      IrOpcode::kRuntimeAbort,                   // opcode
+      Operator::kNoThrow | Operator::kNoDeopt,   // flags
+      "RuntimeAbort",                            // name
+      0, 1, 1, 0, 1, 0,                          // counts
+      reason);                                   // parameter
+}
 
 const Operator* SimplifiedOperatorBuilder::ChangeFloat64ToTagged(
     CheckForMinusZeroMode mode) {
@@ -819,6 +849,17 @@ const Operator* SimplifiedOperatorBuilder::CheckedTaggedToFloat64(
   UNREACHABLE();
 }
 
+const Operator* SimplifiedOperatorBuilder::CheckedTruncateTaggedToWord32(
+    CheckTaggedInputMode mode) {
+  switch (mode) {
+    case CheckTaggedInputMode::kNumber:
+      return &cache_.kCheckedTruncateTaggedToWord32NumberOperator;
+    case CheckTaggedInputMode::kNumberOrOddball:
+      return &cache_.kCheckedTruncateTaggedToWord32NumberOrOddballOperator;
+  }
+  UNREACHABLE();
+}
+
 const Operator* SimplifiedOperatorBuilder::CheckMaps(CheckMapsFlags flags,
                                                      ZoneHandleSet<Map> maps) {
   CheckMapsParameters const parameters(flags, maps);
@@ -828,6 +869,16 @@ const Operator* SimplifiedOperatorBuilder::CheckMaps(CheckMapsFlags flags,
       "CheckMaps",                                     // name
       1, 1, 1, 0, 1, 0,                                // counts
       parameters);                                     // parameter
+}
+
+const Operator* SimplifiedOperatorBuilder::CompareMaps(
+    ZoneHandleSet<Map> maps) {
+  return new (zone()) Operator1<ZoneHandleSet<Map>>(  // --
+      IrOpcode::kCompareMaps,                         // opcode
+      Operator::kEliminatable,                        // flags
+      "CompareMaps",                                  // name
+      1, 1, 1, 1, 1, 0,                               // counts
+      maps);                                          // parameter
 }
 
 const Operator* SimplifiedOperatorBuilder::CheckFloat64Hole(
@@ -846,6 +897,8 @@ const Operator* SimplifiedOperatorBuilder::SpeculativeToNumber(
   switch (hint) {
     case NumberOperationHint::kSignedSmall:
       return &cache_.kSpeculativeToNumberSignedSmallOperator;
+    case NumberOperationHint::kSignedSmallInputs:
+      break;
     case NumberOperationHint::kSigned32:
       return &cache_.kSpeculativeToNumberSigned32Operator;
     case NumberOperationHint::kNumber:
@@ -861,13 +914,13 @@ const Operator* SimplifiedOperatorBuilder::EnsureWritableFastElements() {
 }
 
 const Operator* SimplifiedOperatorBuilder::MaybeGrowFastElements(
-    GrowFastElementsFlags flags) {
-  return new (zone()) Operator1<GrowFastElementsFlags>(  // --
-      IrOpcode::kMaybeGrowFastElements,                  // opcode
-      Operator::kNoThrow,                                // flags
-      "MaybeGrowFastElements",                           // name
-      4, 1, 1, 1, 1, 0,                                  // counts
-      flags);                                            // parameter
+    GrowFastElementsMode mode) {
+  return new (zone()) Operator1<GrowFastElementsMode>(  // --
+      IrOpcode::kMaybeGrowFastElements,                 // opcode
+      Operator::kNoThrow,                               // flags
+      "MaybeGrowFastElements",                          // name
+      4, 1, 1, 1, 1, 0,                                 // counts
+      mode);                                            // parameter
 }
 
 const Operator* SimplifiedOperatorBuilder::TransitionElementsKind(
@@ -916,13 +969,43 @@ const Operator* SimplifiedOperatorBuilder::ArgumentsLength(
 }
 
 int FormalParameterCountOf(const Operator* op) {
-  DCHECK(op->opcode() == IrOpcode::kArgumentsLength);
+  DCHECK_EQ(IrOpcode::kArgumentsLength, op->opcode());
   return OpParameter<ArgumentsLengthParameters>(op).formal_parameter_count;
 }
 
 bool IsRestLengthOf(const Operator* op) {
-  DCHECK(op->opcode() == IrOpcode::kArgumentsLength);
+  DCHECK_EQ(IrOpcode::kArgumentsLength, op->opcode());
   return OpParameter<ArgumentsLengthParameters>(op).is_rest_length;
+}
+
+const Operator* SimplifiedOperatorBuilder::NewFastDoubleElements(
+    PretenureFlag pretenure) {
+  return new (zone()) Operator1<PretenureFlag>(  // --
+      IrOpcode::kNewFastDoubleElements,          // opcode
+      Operator::kEliminatable,                   // flags
+      "NewFastDoubleElements",                   // name
+      1, 1, 1, 1, 1, 0,                          // counts
+      pretenure);                                // parameter
+}
+
+const Operator* SimplifiedOperatorBuilder::NewFastSmiOrObjectElements(
+    PretenureFlag pretenure) {
+  return new (zone()) Operator1<PretenureFlag>(  // --
+      IrOpcode::kNewFastSmiOrObjectElements,     // opcode
+      Operator::kEliminatable,                   // flags
+      "NewFastSmiOrObjectElements",              // name
+      1, 1, 1, 1, 1, 0,                          // counts
+      pretenure);                                // parameter
+}
+
+const Operator* SimplifiedOperatorBuilder::NewArgumentsElements(
+    int mapped_count) {
+  return new (zone()) Operator1<int>(   // --
+      IrOpcode::kNewArgumentsElements,  // opcode
+      Operator::kEliminatable,          // flags
+      "NewArgumentsElements",           // name
+      2, 1, 0, 1, 1, 0,                 // counts
+      mapped_count);                    // parameter
 }
 
 const Operator* SimplifiedOperatorBuilder::Allocate(Type* type,
@@ -931,30 +1014,6 @@ const Operator* SimplifiedOperatorBuilder::Allocate(Type* type,
       IrOpcode::kAllocate,
       Operator::kNoDeopt | Operator::kNoThrow | Operator::kNoWrite, "Allocate",
       1, 1, 1, 1, 1, 0, AllocateParameters(type, pretenure));
-}
-
-
-const Operator* SimplifiedOperatorBuilder::LoadBuffer(BufferAccess access) {
-  switch (access.external_array_type()) {
-#define LOAD_BUFFER(Type, type, TYPE, ctype, size) \
-  case kExternal##Type##Array:                     \
-    return &cache_.kLoadBuffer##Type;
-    TYPED_ARRAYS(LOAD_BUFFER)
-#undef LOAD_BUFFER
-  }
-  UNREACHABLE();
-}
-
-
-const Operator* SimplifiedOperatorBuilder::StoreBuffer(BufferAccess access) {
-  switch (access.external_array_type()) {
-#define STORE_BUFFER(Type, type, TYPE, ctype, size) \
-  case kExternal##Type##Array:                      \
-    return &cache_.kStoreBuffer##Type;
-    TYPED_ARRAYS(STORE_BUFFER)
-#undef STORE_BUFFER
-  }
-  UNREACHABLE();
 }
 
 const Operator* SimplifiedOperatorBuilder::StringFromCodePoint(
@@ -973,6 +1032,8 @@ const Operator* SimplifiedOperatorBuilder::StringFromCodePoint(
     switch (hint) {                                                           \
       case NumberOperationHint::kSignedSmall:                                 \
         return &cache_.k##Name##SignedSmallOperator;                          \
+      case NumberOperationHint::kSignedSmallInputs:                           \
+        return &cache_.k##Name##SignedSmallInputsOperator;                    \
       case NumberOperationHint::kSigned32:                                    \
         return &cache_.k##Name##Signed32Operator;                             \
       case NumberOperationHint::kNumber:                                      \
@@ -1005,6 +1066,15 @@ SPECULATIVE_NUMBER_BINOP_LIST(SPECULATIVE_NUMBER_BINOP)
   }
 ACCESS_OP_LIST(ACCESS)
 #undef ACCESS
+
+const Operator* SimplifiedOperatorBuilder::TransitionAndStoreElement(
+    Handle<Map> double_map, Handle<Map> fast_map) {
+  TransitionAndStoreElementParameters parameters(double_map, fast_map);
+  return new (zone()) Operator1<TransitionAndStoreElementParameters>(
+      IrOpcode::kTransitionAndStoreElement,
+      Operator::kNoDeopt | Operator::kNoThrow, "TransitionAndStoreElement", 3,
+      1, 1, 0, 1, 0, parameters);
+}
 
 }  // namespace compiler
 }  // namespace internal

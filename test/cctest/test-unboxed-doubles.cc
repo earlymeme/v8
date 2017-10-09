@@ -24,8 +24,9 @@
 #include "test/cctest/cctest.h"
 #include "test/cctest/heap/heap-utils.h"
 
-using namespace v8::base;
-using namespace v8::internal;
+namespace v8 {
+namespace internal {
+namespace test_unboxed_doubles {
 
 #if V8_DOUBLE_FIELDS_UNBOXING
 
@@ -602,15 +603,14 @@ TEST(LayoutDescriptorCreateNewSlow) {
     LayoutDescriptor* layout_desc = *layout_descriptor;
     CHECK_EQ(layout_desc, LayoutDescriptor::cast(layout_desc));
     CHECK_EQ(layout_desc, LayoutDescriptor::cast_gc_safe(layout_desc));
-    CHECK(layout_descriptor->IsFixedTypedArrayBase());
+    CHECK(layout_desc->IsSlowLayout());
     // Now make it look like a forwarding pointer to layout_descriptor_copy.
     MapWord map_word = layout_desc->map_word();
     CHECK(!map_word.IsForwardingAddress());
     layout_desc->set_map_word(
         MapWord::FromForwardingAddress(*layout_descriptor_copy));
     CHECK(layout_desc->map_word().IsForwardingAddress());
-    CHECK_EQ(*layout_descriptor_copy,
-             LayoutDescriptor::cast_gc_safe(layout_desc));
+    CHECK_EQ(layout_desc, LayoutDescriptor::cast_gc_safe(layout_desc));
 
     // Restore it back.
     layout_desc->set_map_word(map_word);
@@ -911,6 +911,7 @@ TEST(LayoutDescriptorAppendIfFastOrUseFullAllDoubles) {
 
 
 TEST(Regress436816) {
+  ManualGCScope manual_gc_scope;
   CcTest::InitializeVM();
   Isolate* isolate = CcTest::i_isolate();
   Factory* factory = isolate->factory();
@@ -960,6 +961,7 @@ TEST(Regress436816) {
 
 
 TEST(DescriptorArrayTrimming) {
+  ManualGCScope manual_gc_scope;
   CcTest::InitializeVM();
   v8::HandleScope scope(CcTest::isolate());
   Isolate* isolate = CcTest::i_isolate();
@@ -982,7 +984,7 @@ TEST(DescriptorArrayTrimming) {
   CHECK(map->layout_descriptor()->IsConsistentWithMap(*map, true));
   CHECK(map->layout_descriptor()->IsSlowLayout());
   CHECK(map->owns_descriptors());
-  CHECK_EQ(2, map->layout_descriptor()->length());
+  CHECK_EQ(8, map->layout_descriptor()->length());
 
   {
     // Add transitions to double fields.
@@ -1002,7 +1004,7 @@ TEST(DescriptorArrayTrimming) {
     CHECK_EQ(map->layout_descriptor(), tmp_map->layout_descriptor());
   }
   CHECK(map->layout_descriptor()->IsSlowLayout());
-  CHECK_EQ(4, map->layout_descriptor()->length());
+  CHECK_EQ(16, map->layout_descriptor()->length());
 
   // The unused tail of the layout descriptor is now "durty" because of sharing.
   CHECK(map->layout_descriptor()->IsConsistentWithMap(*map));
@@ -1022,7 +1024,7 @@ TEST(DescriptorArrayTrimming) {
   CHECK_EQ(map->NumberOfOwnDescriptors(),
            map->instance_descriptors()->number_of_descriptors());
   CHECK(map->layout_descriptor()->IsSlowLayout());
-  CHECK_EQ(2, map->layout_descriptor()->length());
+  CHECK_EQ(8, map->layout_descriptor()->length());
 
   {
     // Add transitions to tagged fields.
@@ -1085,7 +1087,7 @@ TEST(DoScavenge) {
   CcTest::CollectGarbage(i::NEW_SPACE);
 
   // Create temp object in the new space.
-  Handle<JSArray> temp = factory->NewJSArray(0, FAST_ELEMENTS);
+  Handle<JSArray> temp = factory->NewJSArray(0, PACKED_ELEMENTS);
   CHECK(isolate->heap()->new_space()->Contains(*temp));
 
   // Construct a double value that looks like a pointer to the new space object
@@ -1109,6 +1111,7 @@ TEST(DoScavenge) {
 
 TEST(DoScavengeWithIncrementalWriteBarrier) {
   if (FLAG_never_compact || !FLAG_incremental_marking) return;
+  ManualGCScope manual_gc_scope;
   CcTest::InitializeVM();
   v8::HandleScope scope(CcTest::isolate());
   Isolate* isolate = CcTest::i_isolate();
@@ -1138,7 +1141,7 @@ TEST(DoScavengeWithIncrementalWriteBarrier) {
     AlwaysAllocateScope always_allocate(isolate);
     // Make sure |obj_value| is placed on an old-space evacuation candidate.
     heap::SimulateFullSpace(old_space);
-    obj_value = factory->NewJSArray(32 * KB, FAST_HOLEY_ELEMENTS, TENURED);
+    obj_value = factory->NewJSArray(32 * KB, HOLEY_ELEMENTS, TENURED);
     ec_page = Page::FromAddress(obj_value->address());
   }
 
@@ -1176,7 +1179,9 @@ TEST(DoScavengeWithIncrementalWriteBarrier) {
   // in compacting mode and |obj_value|'s page is an evacuation candidate).
   IncrementalMarking* marking = heap->incremental_marking();
   CHECK(marking->IsCompacting());
-  CHECK(ObjectMarking::IsBlack(*obj, MarkingState::Internal(*obj)));
+  IncrementalMarking::MarkingState* marking_state =
+      heap->incremental_marking()->marking_state();
+  CHECK(marking_state->IsBlack(*obj));
   CHECK(MarkCompactCollector::IsOnEvacuationCandidate(*obj_value));
 
   // Trigger GCs so that |obj| moves to old gen.
@@ -1457,6 +1462,7 @@ static void TestIncrementalWriteBarrier(Handle<Map> map, Handle<Map> new_map,
                                         int double_descriptor,
                                         bool check_tagged_value = true) {
   if (FLAG_never_compact || !FLAG_incremental_marking) return;
+  ManualGCScope manual_gc_scope;
   FLAG_manual_evacuation_candidates_selection = true;
   Isolate* isolate = CcTest::i_isolate();
   Factory* factory = isolate->factory();
@@ -1481,7 +1487,7 @@ static void TestIncrementalWriteBarrier(Handle<Map> map, Handle<Map> new_map,
 
     // Make sure |obj_value| is placed on an old-space evacuation candidate.
     heap::SimulateFullSpace(old_space);
-    obj_value = factory->NewJSArray(32 * KB, FAST_HOLEY_ELEMENTS, TENURED);
+    obj_value = factory->NewJSArray(32 * KB, HOLEY_ELEMENTS, TENURED);
     ec_page = Page::FromAddress(obj_value->address());
     CHECK_NE(ec_page, Page::FromAddress(obj->address()));
   }
@@ -1496,8 +1502,9 @@ static void TestIncrementalWriteBarrier(Handle<Map> map, Handle<Map> new_map,
   // still active and |obj_value|'s page is indeed an evacuation candidate).
   IncrementalMarking* marking = heap->incremental_marking();
   CHECK(marking->IsMarking());
-  CHECK(ObjectMarking::IsBlack(*obj, MarkingState::Internal(*obj)));
-  CHECK(ObjectMarking::IsBlack(*obj_value, MarkingState::Internal(*obj_value)));
+  IncrementalMarking::MarkingState* marking_state = marking->marking_state();
+  CHECK(marking_state->IsBlack(*obj));
+  CHECK(marking_state->IsBlack(*obj_value));
   CHECK(MarkCompactCollector::IsOnEvacuationCandidate(*obj_value));
 
   // Trigger incremental write barrier, which should add a slot to remembered
@@ -1539,6 +1546,7 @@ enum OldToWriteBarrierKind {
 };
 static void TestWriteBarrierObjectShiftFieldsRight(
     OldToWriteBarrierKind write_barrier_kind) {
+  ManualGCScope manual_gc_scope;
   CcTest::InitializeVM();
   Isolate* isolate = CcTest::i_isolate();
   v8::HandleScope scope(CcTest::isolate());
@@ -1590,3 +1598,7 @@ TEST(IncrementalWriteBarrierObjectShiftFieldsRight) {
 // Map::ReconfigureProperty() supports that.
 
 #endif
+
+}  // namespace test_unboxed_doubles
+}  // namespace internal
+}  // namespace v8
