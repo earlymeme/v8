@@ -46,5 +46,5 @@ gclient sync 会重写这几个文件,之后runhooks时,会下载失败,需要�
 > 2. v8/third_party/binutils/download.py
 > 3. v8/tools/clang/scripts/update.py
 
-export http_proxy=http://host:port
+export http_proxy=https://agent.baidu.com:8118
 可以让命令行窗口也走代理
