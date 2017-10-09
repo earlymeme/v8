@@ -45,37 +45,22 @@ class V8_EXPORT_PRIVATE Compiler : public AllStatic {
  public:
   // 清除异常标志
   enum ClearExceptionFlag { KEEP_EXCEPTION, CLEAR_EXCEPTION };
-<<<<<<< HEAD
-  // 并发模式
-  enum ConcurrencyMode { NOT_CONCURRENT, CONCURRENT };
-=======
->>>>>>> upstream/master
 
   // ===========================================================================
   // The following family of methods ensures a given function is compiled. The
   // general contract is that failures will be reported by returning {false},
   // whereas successful compilation ensures the {is_compiled} predicate on the
   // given function holds (except for live-edit, which compiles the world).
-<<<<<<< HEAD
-  // 标志位。一般约定：失败返回false，成功设置is_compiled（除了实时编辑会编译全部）
-=======
 
   static bool Compile(Handle<SharedFunctionInfo> shared,
                       ClearExceptionFlag flag);
->>>>>>> upstream/master
   static bool Compile(Handle<JSFunction> function, ClearExceptionFlag flag);
   static bool CompileOptimized(Handle<JSFunction> function, ConcurrencyMode);
   static MaybeHandle<JSArray> CompileForLiveEdit(Handle<Script> script);
 
   // Prepare a compilation job for unoptimized code. Requires ParseAndAnalyse.
-<<<<<<< HEAD
-  // 预备未优化代码的编译任务
-  static CompilationJob* PrepareUnoptimizedCompilationJob(
-      CompilationInfo* info);
-=======
   static CompilationJob* PrepareUnoptimizedCompilationJob(ParseInfo* parse_info,
                                                           Isolate* isolate);
->>>>>>> upstream/master
 
   // Generate and install code from previously queued compilation job.
   // 生成，设置已加入队列里的编译任务
@@ -91,27 +76,6 @@ class V8_EXPORT_PRIVATE Compiler : public AllStatic {
       EagerInnerFunctionLiterals;
 
   // Parser::Parse, then Compiler::Analyze.
-<<<<<<< HEAD
-  static bool ParseAndAnalyze(ParseInfo* info, Isolate* isolate);
-  // Convenience function
-  // 方便方法
-  static bool ParseAndAnalyze(CompilationInfo* info);
-  // Rewrite, analyze scopes, and renumber. If |eager_literals| is non-null, it
-  // is appended with inner function literals which should be eagerly compiled.
-  // 重写，分析作用域，重排。如果eager_literals不为null，立刻要编译的内部函数会被追加，
-  static bool Analyze(ParseInfo* info, Isolate* isolate,
-                      EagerInnerFunctionLiterals* eager_literals = nullptr);
-  // Convenience function
-  // 便利函数
-  static bool Analyze(CompilationInfo* info,
-                      EagerInnerFunctionLiterals* eager_literals = nullptr);
-  // Adds deoptimization support, requires ParseAndAnalyze.
-  // 去优化支持
-  static bool EnsureDeoptimizationSupport(CompilationInfo* info);
-  // Ensures that bytecode is generated, calls ParseAndAnalyze internally.
-  // 保证已经生成字节码
-  static bool EnsureBytecode(CompilationInfo* info);
-=======
   static bool ParseAndAnalyze(ParseInfo* parse_info,
                               Handle<SharedFunctionInfo> shared_info,
                               Isolate* isolate);
@@ -119,7 +83,6 @@ class V8_EXPORT_PRIVATE Compiler : public AllStatic {
   // is appended with inner function literals which should be eagerly compiled.
   static bool Analyze(ParseInfo* parse_info,
                       EagerInnerFunctionLiterals* eager_literals = nullptr);
->>>>>>> upstream/master
 
   // ===========================================================================
   // The following family of methods instantiates new functions for scripts or
@@ -155,18 +118,10 @@ class V8_EXPORT_PRIVATE Compiler : public AllStatic {
       ParseRestriction restriction, int parameters_end_pos);
 
   // Create a shared function info object for a String source within a context.
-<<<<<<< HEAD
-  // 处理字符串源码
-  static Handle<SharedFunctionInfo> GetSharedFunctionInfoForScript(
-      Handle<String> source, Handle<Object> script_name, int line_offset,
-      int column_offset, ScriptOriginOptions resource_options,
-      Handle<Object> source_map_url, Handle<Context> context,
-=======
   static MaybeHandle<SharedFunctionInfo> GetSharedFunctionInfoForScript(
       Handle<String> source, MaybeHandle<Object> maybe_script_name,
       int line_offset, int column_offset, ScriptOriginOptions resource_options,
       MaybeHandle<Object> maybe_source_map_url, Handle<Context> context,
->>>>>>> upstream/master
       v8::Extension* extension, ScriptData** cached_data,
       ScriptCompiler::CompileOptions compile_options,
       NativesFlag is_natives_code,
@@ -179,15 +134,9 @@ class V8_EXPORT_PRIVATE Compiler : public AllStatic {
       Handle<Script> script, ParseInfo* info, int source_length);
 
   // Create a shared function info object (the code may be lazily compiled).
-<<<<<<< HEAD
-  // 得到共享函数对象，这个script的code可能会延迟编译
-  static Handle<SharedFunctionInfo> GetSharedFunctionInfo(
-      FunctionLiteral* node, Handle<Script> script, CompilationInfo* outer);
-=======
   static Handle<SharedFunctionInfo> GetSharedFunctionInfo(FunctionLiteral* node,
                                                           Handle<Script> script,
                                                           Isolate* isolate);
->>>>>>> upstream/master
 
   // Create a shared function info object for a native function literal.
   // 处理原生函数
@@ -283,14 +232,8 @@ class V8_EXPORT_PRIVATE CompilationJob {
   }
   // 状态
   State state() const { return state_; }
-<<<<<<< HEAD
-  // 编译的信息
-  CompilationInfo* info() const { return info_; }
-  // 隔离环境
-=======
   ParseInfo* parse_info() const { return parse_info_; }
   CompilationInfo* compilation_info() const { return compilation_info_; }
->>>>>>> upstream/master
   Isolate* isolate() const;
   virtual size_t AllocatedMemory() const { return 0; }
 
@@ -301,14 +244,6 @@ class V8_EXPORT_PRIVATE CompilationJob {
   virtual Status ExecuteJobImpl() = 0;
   virtual Status FinalizeJobImpl() = 0;
 
-<<<<<<< HEAD
-  // Registers weak object to optimized code dependencies.
-  // TODO(turbofan): Move this to pipeline.cc once Crankshaft dies.
-  // 在已优化代码依赖注册弱对象
-  void RegisterWeakObjectsInOptimizedCode(Handle<Code> code);
-
-=======
->>>>>>> upstream/master
  private:
   // TODO(6409): Remove parse_info once Fullcode and AstGraphBuilder are gone.
   ParseInfo* parse_info_;
