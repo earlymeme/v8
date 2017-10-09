@@ -4,17 +4,11 @@
 
 #include "src/factory.h"
 #include "src/isolate.h"
-#include "src/objects.h"
-// FIXME(mstarzinger, marja): This is weird, but required because of the missing
-// (disallowed) include: src/factory.h -> src/objects-inl.h
 #include "src/objects-inl.h"
-// FIXME(mstarzinger, marja): This is weird, but required because of the missing
-// (disallowed) include: src/feedback-vector.h ->
-// src/feedback-vector-inl.h
-#include "src/feedback-vector-inl.h"
 #include "test/cctest/cctest.h"
 
-using namespace v8::internal;
+namespace v8 {
+namespace internal {
 
 TEST(CodeLayoutWithoutUnwindingInfo) {
   CcTest::InitializeVM();
@@ -38,7 +32,7 @@ TEST(CodeLayoutWithoutUnwindingInfo) {
   code_desc.unwinding_info_size = 0;
 
   Handle<Code> code = CcTest::i_isolate()->factory()->NewCode(
-      code_desc, 0, Handle<Object>::null());
+      code_desc, Code::STUB, Handle<Object>::null());
 
   CHECK(!code->has_unwinding_info());
   CHECK_EQ(code->instruction_size(), buffer_size);
@@ -75,7 +69,7 @@ TEST(CodeLayoutWithUnwindingInfo) {
   code_desc.unwinding_info_size = unwinding_info_size;
 
   Handle<Code> code = CcTest::i_isolate()->factory()->NewCode(
-      code_desc, 0, Handle<Object>::null());
+      code_desc, Code::STUB, Handle<Object>::null());
 
   CHECK(code->has_unwinding_info());
   CHECK_EQ(code->instruction_size(), buffer_size);
@@ -91,3 +85,6 @@ TEST(CodeLayoutWithUnwindingInfo) {
            Code::kHeaderSize + RoundUp(buffer_size, kInt64Size) + kInt64Size +
                unwinding_info_size - kHeapObjectTag);
 }
+
+}  // namespace internal
+}  // namespace v8

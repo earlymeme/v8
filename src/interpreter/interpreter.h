@@ -23,6 +23,8 @@ class Isolate;
 class Callable;
 class CompilationInfo;
 class CompilationJob;
+class FunctionLiteral;
+class ParseInfo;
 class SetupIsolateDelegate;
 class RootVisitor;
 
@@ -35,12 +37,10 @@ class Interpreter {
   explicit Interpreter(Isolate* isolate);
   virtual ~Interpreter() {}
 
-  // Returns the interrupt budget which should be used for the profiler counter.
-  // 返回中断的预算，用来做profile计数
-  static int InterruptBudget();
-
-  // Creates a compilation job which will generate bytecode for |info|.
-  static CompilationJob* NewCompilationJob(CompilationInfo* info);
+  // Creates a compilation job which will generate bytecode for |literal|.
+  static CompilationJob* NewCompilationJob(ParseInfo* parse_info,
+                                           FunctionLiteral* literal,
+                                           Isolate* isolate);
 
   // Return bytecode handler for |bytecode|.
   // 返回字节码句柄
@@ -64,8 +64,8 @@ class Interpreter {
     return reinterpret_cast<Address>(bytecode_dispatch_counters_table_.get());
   }
 
-  // TODO(ignition): Tune code size multiplier.
-  static const int kCodeSizeMultiplier = 24;
+  // The interrupt budget which should be used for the profiler counter.
+  static const int kInterruptBudget = 144 * KB;
 
  private:
   friend class SetupInterpreter;

@@ -9,9 +9,9 @@
 
 #include "src/builtins/builtins-arguments-gen.h"
 #include "src/builtins/builtins-constructor-gen.h"
-#include "src/builtins/builtins-forin-gen.h"
 #include "src/code-events.h"
 #include "src/code-factory.h"
+#include "src/debug/debug.h"
 #include "src/factory.h"
 #include "src/ic/accessor-assembler.h"
 #include "src/ic/binary-op-assembler.h"
@@ -498,34 +498,62 @@ IGNITION_HANDLER(LdaLookupGlobalSlotInsideTypeof,
   LookupGlobalSlot(Runtime::kLoadLookupSlotInsideTypeof);
 }
 
-// StaLookupSlotSloppy <name_index>
+// StaLookupSlotSloppy <name_index> <flags>
 //
 // Store the object in accumulator to the object with the name in constant
-// pool entry |name_index| in sloppy mode.
-IGNITION_HANDLER(StaLookupSlotSloppy, InterpreterAssembler) {
+// pool entry |name_index|.
+IGNITION_HANDLER(StaLookupSlot, InterpreterAssembler) {
   Node* value = GetAccumulator();
   Node* index = BytecodeOperandIdx(0);
+  Node* bytecode_flags = BytecodeOperandFlag(1);
   Node* name = LoadConstantPoolEntry(index);
   Node* context = GetContext();
-  Node* result =
-      CallRuntime(Runtime::kStoreLookupSlot_Sloppy, context, name, value);
-  SetAccumulator(result);
-  Dispatch();
-}
+  Variable var_result(this, MachineRepresentation::kTagged);
 
-// StaLookupSlotStrict <name_index>
-//
-// Store the object in accumulator to the object with the name in constant
-// pool entry |name_index| in strict mode.
-IGNITION_HANDLER(StaLookupSlotStrict, InterpreterAssembler) {
-  Node* value = GetAccumulator();
-  Node* index = BytecodeOperandIdx(0);
-  Node* name = LoadConstantPoolEntry(index);
-  Node* context = GetContext();
-  Node* result =
-      CallRuntime(Runtime::kStoreLookupSlot_Strict, context, name, value);
-  SetAccumulator(result);
-  Dispatch();
+  Label sloppy(this), strict(this), end(this);
+  DCHECK_EQ(0, SLOPPY);
+  DCHECK_EQ(1, STRICT);
+  DCHECK_EQ(0, static_cast<int>(LookupHoistingMode::kNormal));
+  DCHECK_EQ(1, static_cast<int>(LookupHoistingMode::kLegacySloppy));
+  Branch(IsSetWord32<StoreLookupSlotFlags::LanguageModeBit>(bytecode_flags),
+         &strict, &sloppy);
+
+  BIND(&strict);
+  {
+    CSA_ASSERT(this, IsClearWord32<StoreLookupSlotFlags::LookupHoistingModeBit>(
+                         bytecode_flags));
+    var_result.Bind(
+        CallRuntime(Runtime::kStoreLookupSlot_Strict, context, name, value));
+    Goto(&end);
+  }
+
+  BIND(&sloppy);
+  {
+    Label hoisting(this), ordinary(this);
+    Branch(IsSetWord32<StoreLookupSlotFlags::LookupHoistingModeBit>(
+               bytecode_flags),
+           &hoisting, &ordinary);
+
+    BIND(&hoisting);
+    {
+      var_result.Bind(CallRuntime(Runtime::kStoreLookupSlot_SloppyHoisting,
+                                  context, name, value));
+      Goto(&end);
+    }
+
+    BIND(&ordinary);
+    {
+      var_result.Bind(
+          CallRuntime(Runtime::kStoreLookupSlot_Sloppy, context, name, value));
+      Goto(&end);
+    }
+  }
+
+  BIND(&end);
+  {
+    SetAccumulator(var_result.value());
+    Dispatch();
+  }
 }
 
 // LdaNamedProperty <object> <name_index> <slot>
@@ -569,7 +597,7 @@ IGNITION_HANDLER(LdaNamedProperty, InterpreterAssembler) {
 // Calls the KeyedLoadIC at FeedBackVector slot <slot> for <object> and the key
 // in the accumulator.
 IGNITION_HANDLER(LdaKeyedProperty, InterpreterAssembler) {
-  Callable ic = CodeFactory::KeyedLoadICInOptimizedCode(isolate());
+  Callable ic = Builtins::CallableFor(isolate(), Builtins::kKeyedLoadIC);
   Node* code_target = HeapConstant(ic.code());
   Node* reg_index = BytecodeOperandReg(0);
   Node* object = LoadRegister(reg_index);
@@ -608,25 +636,13 @@ class InterpreterStoreNamedPropertyAssembler : public InterpreterAssembler {
   }
 };
 
-// StaNamedPropertySloppy <object> <name_index> <slot>
+// StaNamedProperty <object> <name_index> <slot>
 //
-// Calls the sloppy mode StoreIC at FeedBackVector slot <slot> for <object> and
+// Calls the StoreIC at FeedBackVector slot <slot> for <object> and
 // the name in constant pool entry <name_index> with the value in the
 // accumulator.
-IGNITION_HANDLER(StaNamedPropertySloppy,
-                 InterpreterStoreNamedPropertyAssembler) {
-  Callable ic = CodeFactory::StoreICInOptimizedCode(isolate(), SLOPPY);
-  StaNamedProperty(ic);
-}
-
-// StaNamedPropertyStrict <object> <name_index> <slot>
-//
-// Calls the strict mode StoreIC at FeedBackVector slot <slot> for <object> and
-// the name in constant pool entry <name_index> with the value in the
-// accumulator.
-IGNITION_HANDLER(StaNamedPropertyStrict,
-                 InterpreterStoreNamedPropertyAssembler) {
-  Callable ic = CodeFactory::StoreICInOptimizedCode(isolate(), STRICT);
+IGNITION_HANDLER(StaNamedProperty, InterpreterStoreNamedPropertyAssembler) {
+  Callable ic = Builtins::CallableFor(isolate(), Builtins::kStoreIC);
   StaNamedProperty(ic);
 }
 
@@ -640,48 +656,25 @@ IGNITION_HANDLER(StaNamedOwnProperty, InterpreterStoreNamedPropertyAssembler) {
   StaNamedProperty(ic);
 }
 
-class InterpreterStoreKeyedPropertyAssembler : public InterpreterAssembler {
- public:
-  InterpreterStoreKeyedPropertyAssembler(CodeAssemblerState* state,
-                                         Bytecode bytecode,
-                                         OperandScale operand_scale)
-      : InterpreterAssembler(state, bytecode, operand_scale) {}
-
-  void StaKeyedProperty(Callable ic) {
-    Node* code_target = HeapConstant(ic.code());
-    Node* object_reg_index = BytecodeOperandReg(0);
-    Node* object = LoadRegister(object_reg_index);
-    Node* name_reg_index = BytecodeOperandReg(1);
-    Node* name = LoadRegister(name_reg_index);
-    Node* value = GetAccumulator();
-    Node* raw_slot = BytecodeOperandIdx(2);
-    Node* smi_slot = SmiTag(raw_slot);
-    Node* feedback_vector = LoadFeedbackVector();
-    Node* context = GetContext();
-    CallStub(ic.descriptor(), code_target, context, object, name, value,
-             smi_slot, feedback_vector);
-    Dispatch();
-  }
-};
-
-// StaKeyedPropertySloppy <object> <key> <slot>
+// StaKeyedProperty <object> <key> <slot>
 //
-// Calls the sloppy mode KeyStoreIC at FeedBackVector slot <slot> for <object>
-// and the key <key> with the value in the accumulator.
-IGNITION_HANDLER(StaKeyedPropertySloppy,
-                 InterpreterStoreKeyedPropertyAssembler) {
-  Callable ic = CodeFactory::KeyedStoreICInOptimizedCode(isolate(), SLOPPY);
-  StaKeyedProperty(ic);
-}
-
-// StaKeyedPropertyStrict <object> <key> <slot>
-//
-// Calls the strict mode KeyStoreIC at FeedBackVector slot <slot> for <object>
-// and the key <key> with the value in the accumulator.
-IGNITION_HANDLER(StaKeyedPropertyStrict,
-                 InterpreterStoreKeyedPropertyAssembler) {
-  Callable ic = CodeFactory::KeyedStoreICInOptimizedCode(isolate(), STRICT);
-  StaKeyedProperty(ic);
+// Calls the KeyedStoreIC at FeedbackVector slot <slot> for <object> and
+// the key <key> with the value in the accumulator.
+IGNITION_HANDLER(StaKeyedProperty, InterpreterAssembler) {
+  Callable ic = Builtins::CallableFor(isolate(), Builtins::kKeyedStoreIC);
+  Node* code_target = HeapConstant(ic.code());
+  Node* object_reg_index = BytecodeOperandReg(0);
+  Node* object = LoadRegister(object_reg_index);
+  Node* name_reg_index = BytecodeOperandReg(1);
+  Node* name = LoadRegister(name_reg_index);
+  Node* value = GetAccumulator();
+  Node* raw_slot = BytecodeOperandIdx(2);
+  Node* smi_slot = SmiTag(raw_slot);
+  Node* feedback_vector = LoadFeedbackVector();
+  Node* context = GetContext();
+  CallStub(ic.descriptor(), code_target, context, object, name, value, smi_slot,
+           feedback_vector);
+  Dispatch();
 }
 
 // StaDataPropertyInLiteral <object> <name> <flags>
@@ -831,7 +824,8 @@ class InterpreterBinaryOpAssembler : public InterpreterAssembler {
   typedef Node* (BinaryOpAssembler::*BinaryOpGenerator)(Node* context,
                                                         Node* left, Node* right,
                                                         Node* slot,
-                                                        Node* vector);
+                                                        Node* vector,
+                                                        bool lhs_is_smi);
 
   void BinaryOpWithFeedback(BinaryOpGenerator generator) {
     Node* reg_index = BytecodeOperandReg(0);
@@ -842,8 +836,22 @@ class InterpreterBinaryOpAssembler : public InterpreterAssembler {
     Node* feedback_vector = LoadFeedbackVector();
 
     BinaryOpAssembler binop_asm(state());
-    Node* result =
-        (binop_asm.*generator)(context, lhs, rhs, slot_index, feedback_vector);
+    Node* result = (binop_asm.*generator)(context, lhs, rhs, slot_index,
+                                          feedback_vector, false);
+    SetAccumulator(result);
+    Dispatch();
+  }
+
+  void BinaryOpSmiWithFeedback(BinaryOpGenerator generator) {
+    Node* lhs = GetAccumulator();
+    Node* rhs = BytecodeOperandImmSmi(0);
+    Node* context = GetContext();
+    Node* slot_index = BytecodeOperandIdx(1);
+    Node* feedback_vector = LoadFeedbackVector();
+
+    BinaryOpAssembler binop_asm(state());
+    Node* result = (binop_asm.*generator)(context, lhs, rhs, slot_index,
+                                          feedback_vector, true);
     SetAccumulator(result);
     Dispatch();
   }
@@ -887,223 +895,36 @@ IGNITION_HANDLER(Mod, InterpreterBinaryOpAssembler) {
 // AddSmi <imm>
 //
 // Adds an immediate value <imm> to the value in the accumulator.
-IGNITION_HANDLER(AddSmi, InterpreterAssembler) {
-  Variable var_result(this, MachineRepresentation::kTagged);
-  Label fastpath(this), slowpath(this, Label::kDeferred), end(this);
-
-  Node* left = GetAccumulator();
-  Node* right = BytecodeOperandImmSmi(0);
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-
-  // {right} is known to be a Smi.
-  // Check if the {left} is a Smi take the fast path.
-  Branch(TaggedIsSmi(left), &fastpath, &slowpath);
-  BIND(&fastpath);
-  {
-    // Try fast Smi addition first.
-    Node* pair = IntPtrAddWithOverflow(BitcastTaggedToWord(left),
-                                       BitcastTaggedToWord(right));
-    Node* overflow = Projection(1, pair);
-
-    // Check if the Smi additon overflowed.
-    Label if_notoverflow(this);
-    Branch(overflow, &slowpath, &if_notoverflow);
-    BIND(&if_notoverflow);
-    {
-      UpdateFeedback(SmiConstant(BinaryOperationFeedback::kSignedSmall),
-                     feedback_vector, slot_index);
-      var_result.Bind(BitcastWordToTaggedSigned(Projection(0, pair)));
-      Goto(&end);
-    }
-  }
-  BIND(&slowpath);
-  {
-    Node* context = GetContext();
-    // TODO(ishell): pass slot as word-size value.
-    var_result.Bind(CallBuiltin(Builtins::kAddWithFeedback, context, left,
-                                right, TruncateWordToWord32(slot_index),
-                                feedback_vector));
-    Goto(&end);
-  }
-  BIND(&end);
-  {
-    SetAccumulator(var_result.value());
-    Dispatch();
-  }
+IGNITION_HANDLER(AddSmi, InterpreterBinaryOpAssembler) {
+  BinaryOpSmiWithFeedback(&BinaryOpAssembler::Generate_AddWithFeedback);
 }
 
 // SubSmi <imm>
 //
 // Subtracts an immediate value <imm> from the value in the accumulator.
-IGNITION_HANDLER(SubSmi, InterpreterAssembler) {
-  Variable var_result(this, MachineRepresentation::kTagged);
-  Label fastpath(this), slowpath(this, Label::kDeferred), end(this);
-
-  Node* left = GetAccumulator();
-  Node* right = BytecodeOperandImmSmi(0);
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-
-  // {right} is known to be a Smi.
-  // Check if the {left} is a Smi take the fast path.
-  Branch(TaggedIsSmi(left), &fastpath, &slowpath);
-  BIND(&fastpath);
-  {
-    // Try fast Smi subtraction first.
-    Node* pair = IntPtrSubWithOverflow(BitcastTaggedToWord(left),
-                                       BitcastTaggedToWord(right));
-    Node* overflow = Projection(1, pair);
-
-    // Check if the Smi subtraction overflowed.
-    Label if_notoverflow(this);
-    Branch(overflow, &slowpath, &if_notoverflow);
-    BIND(&if_notoverflow);
-    {
-      UpdateFeedback(SmiConstant(BinaryOperationFeedback::kSignedSmall),
-                     feedback_vector, slot_index);
-      var_result.Bind(BitcastWordToTaggedSigned(Projection(0, pair)));
-      Goto(&end);
-    }
-  }
-  BIND(&slowpath);
-  {
-    Node* context = GetContext();
-    // TODO(ishell): pass slot as word-size value.
-    var_result.Bind(CallBuiltin(Builtins::kSubtractWithFeedback, context, left,
-                                right, TruncateWordToWord32(slot_index),
-                                feedback_vector));
-    Goto(&end);
-  }
-  BIND(&end);
-  {
-    SetAccumulator(var_result.value());
-    Dispatch();
-  }
+IGNITION_HANDLER(SubSmi, InterpreterBinaryOpAssembler) {
+  BinaryOpSmiWithFeedback(&BinaryOpAssembler::Generate_SubtractWithFeedback);
 }
 
 // MulSmi <imm>
 //
 // Multiplies an immediate value <imm> to the value in the accumulator.
-IGNITION_HANDLER(MulSmi, InterpreterAssembler) {
-  Variable var_result(this, MachineRepresentation::kTagged);
-  Label fastpath(this), slowpath(this, Label::kDeferred), end(this);
-
-  Node* left = GetAccumulator();
-  Node* right = BytecodeOperandImmSmi(0);
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-
-  // {right} is known to be a Smi.
-  // Check if the {left} is a Smi take the fast path.
-  Branch(TaggedIsSmi(left), &fastpath, &slowpath);
-  BIND(&fastpath);
-  {
-    // Both {lhs} and {rhs} are Smis. The result is not necessarily a smi,
-    // in case of overflow.
-    var_result.Bind(SmiMul(left, right));
-    Node* feedback = SelectSmiConstant(TaggedIsSmi(var_result.value()),
-                                       BinaryOperationFeedback::kSignedSmall,
-                                       BinaryOperationFeedback::kNumber);
-    UpdateFeedback(feedback, feedback_vector, slot_index);
-    Goto(&end);
-  }
-  BIND(&slowpath);
-  {
-    Node* context = GetContext();
-    // TODO(ishell): pass slot as word-size value.
-    var_result.Bind(CallBuiltin(Builtins::kMultiplyWithFeedback, context, left,
-                                right, TruncateWordToWord32(slot_index),
-                                feedback_vector));
-    Goto(&end);
-  }
-
-  BIND(&end);
-  {
-    SetAccumulator(var_result.value());
-    Dispatch();
-  }
+IGNITION_HANDLER(MulSmi, InterpreterBinaryOpAssembler) {
+  BinaryOpSmiWithFeedback(&BinaryOpAssembler::Generate_MultiplyWithFeedback);
 }
 
 // DivSmi <imm>
 //
 // Divides the value in the accumulator by immediate value <imm>.
-IGNITION_HANDLER(DivSmi, InterpreterAssembler) {
-  Variable var_result(this, MachineRepresentation::kTagged);
-  Label fastpath(this), slowpath(this, Label::kDeferred), end(this);
-
-  Node* left = GetAccumulator();
-  Node* right = BytecodeOperandImmSmi(0);
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-
-  // {right} is known to be a Smi.
-  // Check if the {left} is a Smi take the fast path.
-  Branch(TaggedIsSmi(left), &fastpath, &slowpath);
-  BIND(&fastpath);
-  {
-    var_result.Bind(TrySmiDiv(left, right, &slowpath));
-    UpdateFeedback(SmiConstant(BinaryOperationFeedback::kSignedSmall),
-                   feedback_vector, slot_index);
-    Goto(&end);
-  }
-  BIND(&slowpath);
-  {
-    Node* context = GetContext();
-    // TODO(ishell): pass slot as word-size value.
-    var_result.Bind(CallBuiltin(Builtins::kDivideWithFeedback, context, left,
-                                right, TruncateWordToWord32(slot_index),
-                                feedback_vector));
-    Goto(&end);
-  }
-
-  BIND(&end);
-  {
-    SetAccumulator(var_result.value());
-    Dispatch();
-  }
+IGNITION_HANDLER(DivSmi, InterpreterBinaryOpAssembler) {
+  BinaryOpSmiWithFeedback(&BinaryOpAssembler::Generate_DivideWithFeedback);
 }
 
 // ModSmi <imm>
 //
 // Modulo accumulator by immediate value <imm>.
-IGNITION_HANDLER(ModSmi, InterpreterAssembler) {
-  Variable var_result(this, MachineRepresentation::kTagged);
-  Label fastpath(this), slowpath(this, Label::kDeferred), end(this);
-
-  Node* left = GetAccumulator();
-  Node* right = BytecodeOperandImmSmi(0);
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-
-  // {right} is known to be a Smi.
-  // Check if the {left} is a Smi take the fast path.
-  Branch(TaggedIsSmi(left), &fastpath, &slowpath);
-  BIND(&fastpath);
-  {
-    // Both {lhs} and {rhs} are Smis. The result is not necessarily a smi.
-    var_result.Bind(SmiMod(left, right));
-    Node* feedback = SelectSmiConstant(TaggedIsSmi(var_result.value()),
-                                       BinaryOperationFeedback::kSignedSmall,
-                                       BinaryOperationFeedback::kNumber);
-    UpdateFeedback(feedback, feedback_vector, slot_index);
-    Goto(&end);
-  }
-  BIND(&slowpath);
-  {
-    Node* context = GetContext();
-    // TODO(ishell): pass slot as word-size value.
-    var_result.Bind(CallBuiltin(Builtins::kModulusWithFeedback, context, left,
-                                right, TruncateWordToWord32(slot_index),
-                                feedback_vector));
-    Goto(&end);
-  }
-
-  BIND(&end);
-  {
-    SetAccumulator(var_result.value());
-    Dispatch();
-  }
+IGNITION_HANDLER(ModSmi, InterpreterBinaryOpAssembler) {
+  BinaryOpSmiWithFeedback(&BinaryOpAssembler::Generate_ModulusWithFeedback);
 }
 
 class InterpreterBitwiseBinaryOpAssembler : public InterpreterAssembler {
@@ -1235,9 +1056,9 @@ IGNITION_HANDLER(ShiftRightLogical, InterpreterBitwiseBinaryOpAssembler) {
   BitwiseBinaryOpWithFeedback(Token::SHR);
 }
 
-// BitwiseOr <imm>
+// BitwiseOrSmi <imm>
 //
-// BitwiseOr accumulator with <imm>.
+// BitwiseOrSmi accumulator with <imm>.
 IGNITION_HANDLER(BitwiseOrSmi, InterpreterAssembler) {
   Node* left = GetAccumulator();
   Node* right = BytecodeOperandImmSmi(0);
@@ -1260,9 +1081,9 @@ IGNITION_HANDLER(BitwiseOrSmi, InterpreterAssembler) {
   Dispatch();
 }
 
-// BitwiseXor <imm>
+// BitwiseXorSmi <imm>
 //
-// BitwiseXor accumulator with <imm>.
+// BitwiseXorSmi accumulator with <imm>.
 IGNITION_HANDLER(BitwiseXorSmi, InterpreterAssembler) {
   Node* left = GetAccumulator();
   Node* right = BytecodeOperandImmSmi(0);
@@ -1285,9 +1106,9 @@ IGNITION_HANDLER(BitwiseXorSmi, InterpreterAssembler) {
   Dispatch();
 }
 
-// BitwiseAnd <imm>
+// BitwiseAndSmi <imm>
 //
-// BitwiseAnd accumulator with <imm>.
+// BitwiseAndSmi accumulator with <imm>.
 IGNITION_HANDLER(BitwiseAndSmi, InterpreterAssembler) {
   Node* left = GetAccumulator();
   Node* right = BytecodeOperandImmSmi(0);
@@ -1306,6 +1127,29 @@ IGNITION_HANDLER(BitwiseAndSmi, InterpreterAssembler) {
                                         BinaryOperationFeedback::kNumber);
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
                  feedback_vector, slot_index);
+  SetAccumulator(result);
+  Dispatch();
+}
+
+// BitwiseNot <feedback_slot>
+//
+// Perform bitwise-not on the accumulator.
+IGNITION_HANDLER(BitwiseNot, InterpreterAssembler) {
+  Node* operand = GetAccumulator();
+  Node* slot_index = BytecodeOperandIdx(0);
+  Node* feedback_vector = LoadFeedbackVector();
+  Node* context = GetContext();
+
+  Variable var_type_feedback(this, MachineRepresentation::kTaggedSigned);
+  Node* truncated_value =
+      TruncateTaggedToWord32WithFeedback(context, operand, &var_type_feedback);
+  Node* value = Word32Not(truncated_value);
+  Node* result = ChangeInt32ToTagged(value);
+  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
+                                        BinaryOperationFeedback::kSignedSmall,
+                                        BinaryOperationFeedback::kNumber);
+  UpdateFeedback(SmiOr(result_type, var_type_feedback.value()), feedback_vector,
+                 slot_index);
   SetAccumulator(result);
   Dispatch();
 }
@@ -1394,6 +1238,80 @@ IGNITION_HANDLER(ShiftRightLogicalSmi, InterpreterAssembler) {
   Dispatch();
 }
 
+// Negate <feedback_slot>
+//
+// Perform arithmetic negation on the accumulator.
+IGNITION_HANDLER(Negate, InterpreterAssembler) {
+  Node* operand = GetAccumulator();
+
+  Label end(this);
+  VARIABLE(var_type_feedback, MachineRepresentation::kTaggedSigned);
+  VARIABLE(var_result, MachineRepresentation::kTagged);
+
+  Label if_smi(this), if_heapnumber(this), if_notnumber(this, Label::kDeferred);
+  GotoIf(TaggedIsSmi(operand), &if_smi);
+  Branch(IsHeapNumber(operand), &if_heapnumber, &if_notnumber);
+
+  BIND(&if_smi);
+  {
+    Label if_zero(this), if_min_smi(this);
+    // Return -0 if operand is 0.
+    GotoIf(SmiEqual(operand, SmiConstant(0)), &if_zero);
+
+    // Special-case the minimum smi to avoid overflow.
+    GotoIf(SmiEqual(operand, SmiConstant(Smi::kMinValue)), &if_min_smi);
+
+    // Else simply subtract operand from 0.
+    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kSignedSmall));
+    var_result.Bind(SmiSub(SmiConstant(0), operand));
+    Goto(&end);
+
+    BIND(&if_zero);
+    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNumber));
+    var_result.Bind(MinusZeroConstant());
+    Goto(&end);
+
+    BIND(&if_min_smi);
+    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNumber));
+    var_result.Bind(AllocateHeapNumberWithValue(
+        Float64Constant(-static_cast<double>(Smi::kMinValue))));
+    Goto(&end);
+  }
+
+  BIND(&if_heapnumber);
+  {
+    Node* result = Float64Neg(LoadHeapNumberValue(operand));
+    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNumber));
+    var_result.Bind(AllocateHeapNumberWithValue(result));
+    Goto(&end);
+  }
+
+  BIND(&if_notnumber);
+  {
+    Node* instance_type = LoadInstanceType(operand);
+    Node* is_oddball = Word32Equal(instance_type, Int32Constant(ODDBALL_TYPE));
+
+    var_type_feedback.Bind(
+        SelectSmiConstant(is_oddball, BinaryOperationFeedback::kNumberOrOddball,
+                          BinaryOperationFeedback::kAny));
+
+    Node* context = GetContext();
+    Node* result =
+        CallBuiltin(Builtins::kMultiply, context, operand, SmiConstant(-1));
+    var_result.Bind(result);
+    Goto(&end);
+  }
+
+  BIND(&end);
+
+  Node* slot_index = BytecodeOperandIdx(0);
+  Node* feedback_vector = LoadFeedbackVector();
+  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
+
+  SetAccumulator(var_result.value());
+  Dispatch();
+}
+
 // ToName <dst>
 //
 // Convert the object referenced by the accumulator to a name.
@@ -1405,7 +1323,7 @@ IGNITION_HANDLER(ToName, InterpreterAssembler) {
   Dispatch();
 }
 
-// ToNumber <dst> <slot>
+// ToNumber <slot>
 //
 // Convert the object referenced by the accumulator to a number.
 IGNITION_HANDLER(ToNumber, InterpreterAssembler) {
@@ -1419,8 +1337,7 @@ IGNITION_HANDLER(ToNumber, InterpreterAssembler) {
       if_objectisother(this, Label::kDeferred);
 
   GotoIf(TaggedIsSmi(object), &if_objectissmi);
-  Node* object_map = LoadMap(object);
-  Branch(IsHeapNumberMap(object_map), &if_objectisnumber, &if_objectisother);
+  Branch(IsHeapNumber(object), &if_objectisnumber, &if_objectisother);
 
   BIND(&if_objectissmi);
   {
@@ -1439,20 +1356,19 @@ IGNITION_HANDLER(ToNumber, InterpreterAssembler) {
   BIND(&if_objectisother);
   {
     // Convert the {object} to a Number.
-    Callable callable = CodeFactory::NonNumberToNumber(isolate());
-    var_result.Bind(CallStub(callable, context, object));
+    var_result.Bind(CallBuiltin(Builtins::kNonNumberToNumber, context, object));
     var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kAny));
     Goto(&if_done);
   }
 
   BIND(&if_done);
-  StoreRegister(var_result.value(), BytecodeOperandReg(0));
 
   // Record the type feedback collected for {object}.
-  Node* slot_index = BytecodeOperandIdx(1);
+  Node* slot_index = BytecodeOperandIdx(0);
   Node* feedback_vector = LoadFeedbackVector();
   UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
 
+  SetAccumulator(var_result.value());
   Dispatch();
 }
 
@@ -1460,7 +1376,7 @@ IGNITION_HANDLER(ToNumber, InterpreterAssembler) {
 //
 // Convert the object referenced by the accumulator to a JSReceiver.
 IGNITION_HANDLER(ToObject, InterpreterAssembler) {
-  Callable callable(CodeFactory::ToObject(isolate()));
+  Callable callable = Builtins::CallableFor(isolate(), Builtins::kToObject);
   Node* target = HeapConstant(callable.code());
   Node* accumulator = GetAccumulator();
   Node* context = GetContext();
@@ -1469,311 +1385,10 @@ IGNITION_HANDLER(ToObject, InterpreterAssembler) {
   Dispatch();
 }
 
-// ToPrimitiveToString <dst>
-//
-// Convert the object referenced by the accumulator to a primitive, and then
-// convert the operand to a string, in preparation to be used by StringConcat.
-IGNITION_HANDLER(ToPrimitiveToString, InterpreterAssembler) {
-  Label is_string(this), to_primitive(this, Label::kDeferred),
-      to_string(this, Label::kDeferred), done(this);
-  Node* input = GetAccumulator();
-  VARIABLE(result, MachineRepresentation::kTagged, input);
-  VARIABLE(feedback, MachineRepresentation::kTagged);
-
-  GotoIf(TaggedIsSmi(input), &to_string);
-  GotoIf(IsString(input), &is_string);
-  BranchIfJSReceiver(input, &to_primitive, &to_string);
-
-  BIND(&to_primitive);
-  {
-    Callable callable = CodeFactory::NonPrimitiveToPrimitive(isolate());
-    result.Bind(CallStub(callable, GetContext(), input));
-    Goto(&to_string);
-  }
-
-  BIND(&to_string);
-  {
-    feedback.Bind(SmiConstant(ToPrimitiveToStringFeedback::kAny));
-    result.Bind(CallBuiltin(Builtins::kToString, GetContext(), result.value()));
-    Goto(&done);
-  }
-
-  BIND(&is_string);
-  {
-    feedback.Bind(SmiConstant(ToPrimitiveToStringFeedback::kString));
-    Goto(&done);
-  }
-
-  BIND(&done);
-  UpdateFeedback(feedback.value(), LoadFeedbackVector(), BytecodeOperandIdx(1));
-  StoreRegister(result.value(), BytecodeOperandReg(0));
-  Dispatch();
-}
-
-class InterpreterStringConcatAssembler : public InterpreterAssembler {
- public:
-  InterpreterStringConcatAssembler(CodeAssemblerState* state, Bytecode bytecode,
-                                   OperandScale operand_scale)
-      : InterpreterAssembler(state, bytecode, operand_scale) {}
-
-  void CopySequentialStrings(Node* result, Node* first_reg_index,
-                             Node* last_reg_index, Node* final_size,
-                             String::Encoding encoding) {
-    VARIABLE(copy_reg_index, MachineType::PointerRepresentation(),
-             first_reg_index);
-    VARIABLE(copy_str_index, MachineRepresentation::kTaggedSigned,
-             SmiConstant(Smi::kZero));
-
-    Label copy_loop(this, {&copy_reg_index, &copy_str_index}),
-        done_copy_loop(this);
-
-    Goto(&copy_loop);
-    BIND(&copy_loop);
-    {
-      VARIABLE(next_string, MachineRepresentation::kTagged);
-      Label deref_indirect(this, Label::kDeferred),
-          is_sequential(this, &next_string);
-
-      next_string.Bind(LoadRegister(copy_reg_index.value()));
-
-      // Check if we need to dereference an indirect string.
-      Node* instance_type = LoadInstanceType(next_string.value());
-      Branch(IsSequentialStringInstanceType(instance_type), &is_sequential,
-             &deref_indirect);
-
-      BIND(&is_sequential);
-      {
-        Node* next_length = LoadStringLength(next_string.value());
-        CopyStringCharacters(next_string.value(), result,
-                             SmiConstant(Smi::kZero), copy_str_index.value(),
-                             next_length, encoding, encoding, SMI_PARAMETERS);
-        copy_str_index.Bind(SmiAdd(copy_str_index.value(), next_length));
-
-        copy_reg_index.Bind(NextRegister(copy_reg_index.value()));
-        Branch(IntPtrGreaterThan(copy_reg_index.value(), last_reg_index),
-               &copy_loop, &done_copy_loop);
-      }
-
-      BIND(&deref_indirect);
-      {
-        DerefIndirectString(&next_string, instance_type);
-        Goto(&is_sequential);
-      }
-    }
-    BIND(&done_copy_loop);
-    CSA_ASSERT(this, SmiEqual(copy_str_index.value(), final_size));
-  }
-};
-
-// StringConcat <first_reg> <reg_count>
-//
-// Concatenates the string values in registers <first_reg> to
-// <first_reg> + <reg_count - 1> and saves the result in the accumulator.
-IGNITION_HANDLER(StringConcat, InterpreterStringConcatAssembler) {
-  Label do_flat_string(this), do_cons_string(this), done_native(this),
-      done(this), call_runtime(this, Label::kDeferred);
-  Node* first_reg_index = BytecodeOperandReg(0);
-  Node* reg_count = BytecodeOperandCount(1);
-  Node* context = GetContext();
-
-  // There must be at least two strings being concatenated.
-  CSA_ASSERT(this, Uint32GreaterThanOrEqual(reg_count, Int32Constant(2)));
-  // Register indexes are negative, so subtract reg_count-1 from first_index to
-  // get the last register to be concatenated.
-  Node* last_reg_index =
-      IntPtrSub(first_reg_index,
-                IntPtrAdd(ChangeUint32ToWord(reg_count), IntPtrConstant(-1)));
-
-  VARIABLE(reg_index, MachineType::PointerRepresentation(), first_reg_index);
-  VARIABLE(current_string, MachineRepresentation::kTagged,
-           LoadRegister(reg_index.value()));
-  VARIABLE(total_length, MachineRepresentation::kTaggedSigned,
-           SmiConstant(Smi::kZero));
-  VARIABLE(result, MachineRepresentation::kTagged);
-
-  Node* string_encoding = Word32And(LoadInstanceType(current_string.value()),
-                                    Int32Constant(kStringEncodingMask));
-
-  Label flat_length_loop(this, {&reg_index, &current_string, &total_length}),
-      done_flat_length_loop(this);
-  Goto(&flat_length_loop);
-  BIND(&flat_length_loop);
-  {
-    Comment("Loop to find length and type of initial flat-string");
-    Label is_sequential_or_can_deref(this);
-
-    // Increment total_length by the current string's length.
-    Node* string_length = LoadStringLength(current_string.value());
-    CSA_ASSERT(this, TaggedIsSmi(string_length));
-    total_length.Bind(SmiAdd(total_length.value(), string_length));
-
-    // If we are above the min cons string length, bailout.
-    GotoIf(SmiAboveOrEqual(total_length.value(),
-                           SmiConstant(ConsString::kMinLength)),
-           &done_flat_length_loop);
-
-    // Check that all the strings have the same encoding type. If we got here
-    // we are still under ConsString::kMinLength so need to bailout to the
-    // runtime if the strings have different encodings.
-    Node* instance_type = LoadInstanceType(current_string.value());
-    GotoIf(Word32NotEqual(
-               string_encoding,
-               Word32And(instance_type, Int32Constant(kStringEncodingMask))),
-           &call_runtime);
-
-    // Check if the new string is sequential or can be dereferenced as a
-    // sequential string. If it can't and we've reached here, we are still under
-    // ConsString::kMinLength so need to bailout to the runtime.
-    GotoIf(IsSequentialStringInstanceType(instance_type),
-           &is_sequential_or_can_deref);
-    BranchIfCanDerefIndirectString(current_string.value(), instance_type,
-                                   &is_sequential_or_can_deref, &call_runtime);
-    BIND(&is_sequential_or_can_deref);
-
-    reg_index.Bind(NextRegister(reg_index.value()));
-    GotoIf(IntPtrLessThan(reg_index.value(), last_reg_index),
-           &done_flat_length_loop);
-    current_string.Bind(LoadRegister(reg_index.value()));
-    Goto(&flat_length_loop);
-  }
-  BIND(&done_flat_length_loop);
-
-  // If new length is greater than String::kMaxLength, goto runtime to throw.
-  GotoIf(SmiAboveOrEqual(total_length.value(), SmiConstant(String::kMaxLength)),
-         &call_runtime);
-
-  // If new length is less than ConsString::kMinLength, concatenate all operands
-  // as a flat string.
-  GotoIf(SmiLessThan(total_length.value(), SmiConstant(ConsString::kMinLength)),
-         &do_flat_string);
-
-  // If the new length is is greater than ConsString::kMinLength, create a flat
-  // string for first_reg_index to reg_index-1 if there is at least two strings
-  // between.
-  {
-    Comment("New length is greater than ConsString::kMinLength");
-
-    // Subtract length of the last string that pushed us over the edge.
-    Node* string_length = LoadStringLength(current_string.value());
-    total_length.Bind(SmiSub(total_length.value(), string_length));
-
-    // If we have 2 or more operands under ConsString::kMinLength, concatenate
-    // them as a flat string before concatenating the rest as a cons string. We
-    // concatenate the initial string as a flat string even though we will end
-    // up with a cons string since the time and memory overheads of that initial
-    // flat string will be less than they would be for concatenating the whole
-    // string as cons strings.
-    GotoIf(
-        IntPtrGreaterThanOrEqual(IntPtrSub(first_reg_index, reg_index.value()),
-                                 IntPtrConstant(2)),
-        &do_flat_string);
-
-    // Otherwise the whole concatenation should be cons strings.
-    result.Bind(LoadRegister(first_reg_index));
-    total_length.Bind(LoadStringLength(result.value()));
-    reg_index.Bind(NextRegister(first_reg_index));
-    Goto(&do_cons_string);
-  }
-
-  BIND(&do_flat_string);
-  {
-    Comment("Flat string concatenation");
-    Label two_byte(this);
-    GotoIf(Word32Equal(string_encoding, Int32Constant(kTwoByteStringTag)),
-           &two_byte);
-
-    {
-      Comment("One-byte sequential string case");
-      result.Bind(AllocateSeqOneByteString(context, total_length.value(),
-                                           SMI_PARAMETERS));
-      CopySequentialStrings(result.value(), first_reg_index, reg_index.value(),
-                            total_length.value(), String::ONE_BYTE_ENCODING);
-      // If there is still more registers to concatenate, jump to the cons
-      // string case, otherwise we are done.
-      Branch(IntPtrLessThan(reg_index.value(), last_reg_index), &done_native,
-             &do_cons_string);
-    }
-
-    BIND(&two_byte);
-    {
-      Comment("Two-byte sequential string case");
-      result.Bind(AllocateSeqTwoByteString(context, total_length.value(),
-                                           SMI_PARAMETERS));
-      CopySequentialStrings(result.value(), first_reg_index, reg_index.value(),
-                            total_length.value(), String::TWO_BYTE_ENCODING);
-      // If there is still more registers to concatenate, jump to the cons
-      // string case, otherwise we are done.
-      Branch(IntPtrLessThan(reg_index.value(), last_reg_index), &done_native,
-             &do_cons_string);
-    }
-  }
-
-  BIND(&do_cons_string);
-  {
-    Comment("Create cons string");
-    Label loop(this, {&reg_index, &total_length, &result}), done_loop(this),
-        done_cons(this);
-
-    Goto(&loop);
-    BIND(&loop);
-    {
-      Node* next_string = LoadRegister(reg_index.value());
-      Node* next_length = LoadStringLength(next_string);
-
-      // Skip concatenating empty string.
-      GotoIf(SmiEqual(next_length, SmiConstant(Smi::kZero)), &done_cons);
-
-      total_length.Bind(SmiAdd(total_length.value(), next_length));
-
-      // If new length is greater than String::kMaxLength, goto runtime to
-      // throw. Note: we also need to invalidate the string length protector, so
-      // can't just throw here directly.
-      GotoIf(SmiAboveOrEqual(total_length.value(),
-                             SmiConstant(String::kMaxLength)),
-             &call_runtime);
-
-      result.Bind(NewConsString(context, total_length.value(), result.value(),
-                                next_string, CodeStubAssembler::kNone));
-      Goto(&done_cons);
-
-      BIND(&done_cons);
-      reg_index.Bind(NextRegister(reg_index.value()));
-      GotoIfNot(IntPtrLessThan(reg_index.value(), last_reg_index), &loop);
-      Goto(&done_loop);
-    }
-
-    BIND(&done_loop);
-    Goto(&done_native);
-  }
-
-  BIND(&call_runtime);
-  {
-    Comment("Call runtime.");
-    Node* runtime_id = Int32Constant(Runtime::kInterpreterStringConcat);
-    Node* first_reg_loc = RegisterLocation(first_reg_index);
-    result.Bind(CallRuntimeN(runtime_id, context, first_reg_loc, reg_count));
-    Goto(&done);
-  }
-
-  BIND(&done_native);
-  {
-    IncrementCounter(isolate()->counters()->string_add_native(), 1);
-    Goto(&done);
-  }
-
-  BIND(&done);
-  SetAccumulator(result.value());
-  Dispatch();
-}
-
 // Inc
 //
 // Increments value in the accumulator by one.
 IGNITION_HANDLER(Inc, InterpreterAssembler) {
-  typedef CodeStubAssembler::Label Label;
-  typedef compiler::Node Node;
-  typedef CodeStubAssembler::Variable Variable;
-
   Node* value = GetAccumulator();
   Node* context = GetContext();
   Node* slot_index = BytecodeOperandIdx(0);
@@ -1802,7 +1417,7 @@ IGNITION_HANDLER(Inc, InterpreterAssembler) {
     BIND(&if_issmi);
     {
       // Try fast Smi addition first.
-      Node* one = SmiConstant(Smi::FromInt(1));
+      Node* one = SmiConstant(1);
       Node* pair = IntPtrAddWithOverflow(BitcastTaggedToWord(value),
                                          BitcastTaggedToWord(one));
       Node* overflow = Projection(1, pair);
@@ -1865,9 +1480,9 @@ IGNITION_HANDLER(Inc, InterpreterAssembler) {
         BIND(&if_valuenotoddball);
         {
           // Convert to a Number first and try again.
-          Callable callable = CodeFactory::NonNumberToNumber(isolate());
           var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kAny));
-          value_var.Bind(CallStub(callable, context, value));
+          value_var.Bind(
+              CallBuiltin(Builtins::kNonNumberToNumber, context, value));
           Goto(&start);
         }
       }
@@ -1897,10 +1512,6 @@ IGNITION_HANDLER(Inc, InterpreterAssembler) {
 //
 // Decrements value in the accumulator by one.
 IGNITION_HANDLER(Dec, InterpreterAssembler) {
-  typedef CodeStubAssembler::Label Label;
-  typedef compiler::Node Node;
-  typedef CodeStubAssembler::Variable Variable;
-
   Node* value = GetAccumulator();
   Node* context = GetContext();
   Node* slot_index = BytecodeOperandIdx(0);
@@ -1929,7 +1540,7 @@ IGNITION_HANDLER(Dec, InterpreterAssembler) {
     BIND(&if_issmi);
     {
       // Try fast Smi subtraction first.
-      Node* one = SmiConstant(Smi::FromInt(1));
+      Node* one = SmiConstant(1);
       Node* pair = IntPtrSubWithOverflow(BitcastTaggedToWord(value),
                                          BitcastTaggedToWord(one));
       Node* overflow = Projection(1, pair);
@@ -1992,9 +1603,9 @@ IGNITION_HANDLER(Dec, InterpreterAssembler) {
         BIND(&if_valuenotoddball);
         {
           // Convert to a Number first and try again.
-          Callable callable = CodeFactory::NonNumberToNumber(isolate());
           var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kAny));
-          value_var.Bind(CallStub(callable, context, value));
+          value_var.Bind(
+              CallBuiltin(Builtins::kNonNumberToNumber, context, value));
           Goto(&start);
         }
       }
@@ -2138,7 +1749,7 @@ class InterpreterJSCallAssembler : public InterpreterAssembler {
       : InterpreterAssembler(state, bytecode, operand_scale) {}
 
   // Generates code to perform a JS call that collects type feedback.
-  void JSCall(ConvertReceiverMode receiver_mode, TailCallMode tail_call_mode) {
+  void JSCall(ConvertReceiverMode receiver_mode) {
     Node* function_reg = BytecodeOperandReg(0);
     Node* function = LoadRegister(function_reg);
     Node* first_arg_reg = BytecodeOperandReg(1);
@@ -2156,11 +1767,12 @@ class InterpreterJSCallAssembler : public InterpreterAssembler {
     Node* slot_id = BytecodeOperandIdx(3);
     Node* feedback_vector = LoadFeedbackVector();
     Node* context = GetContext();
-    Node* result =
-        CallJSWithFeedback(function, context, first_arg, args_count, slot_id,
-                           feedback_vector, receiver_mode, tail_call_mode);
-    SetAccumulator(result);
-    Dispatch();
+
+    // Collect the {function} feedback.
+    CollectCallFeedback(function, context, feedback_vector, slot_id);
+
+    // Call the function and dispatch to the next handler.
+    CallJSAndDispatch(function, context, first_arg, args_count, receiver_mode);
   }
 
   // Generates code to perform a JS call with a known number of arguments that
@@ -2170,48 +1782,45 @@ class InterpreterJSCallAssembler : public InterpreterAssembler {
     const int kFirstArgumentOperandIndex = 1;
     const int kReceiverOperandCount =
         (receiver_mode == ConvertReceiverMode::kNullOrUndefined) ? 0 : 1;
+    const int kRecieverAndArgOperandCount = kReceiverOperandCount + arg_count;
     const int kSlotOperandIndex =
-        kFirstArgumentOperandIndex + kReceiverOperandCount + arg_count;
-    // Indices and counts of parameters to the call stub.
-    const int kBoilerplateParameterCount = 7;
-    const int kReceiverParameterIndex = 5;
-    const int kReceiverParameterCount = 1;
-    // Only used in a DCHECK.
-    USE(kReceiverParameterCount);
+        kFirstArgumentOperandIndex + kRecieverAndArgOperandCount;
 
     Node* function_reg = BytecodeOperandReg(0);
     Node* function = LoadRegister(function_reg);
-    std::array<Node*, Bytecodes::kMaxOperands + kBoilerplateParameterCount>
-        temp;
-    Callable call_ic = CodeFactory::CallIC(isolate());
-    temp[0] = HeapConstant(call_ic.code());
-    temp[1] = function;
-    temp[2] = Int32Constant(arg_count);
-    temp[3] = BytecodeOperandIdxInt32(kSlotOperandIndex);
-    temp[4] = LoadFeedbackVector();
+    Node* slot_id = BytecodeOperandIdx(kSlotOperandIndex);
+    Node* feedback_vector = LoadFeedbackVector();
+    Node* context = GetContext();
 
-    int parameter_index = kReceiverParameterIndex;
-    if (receiver_mode == ConvertReceiverMode::kNullOrUndefined) {
-      // The first argument parameter (the receiver) is implied to be undefined.
-      Node* undefined_value =
-          HeapConstant(isolate()->factory()->undefined_value());
-      temp[parameter_index++] = undefined_value;
+    // Collect the {function} feedback.
+    CollectCallFeedback(function, context, feedback_vector, slot_id);
+
+    switch (kRecieverAndArgOperandCount) {
+      case 0:
+        CallJSAndDispatch(function, context, Int32Constant(arg_count),
+                          receiver_mode);
+        break;
+      case 1:
+        CallJSAndDispatch(
+            function, context, Int32Constant(arg_count), receiver_mode,
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex)));
+        break;
+      case 2:
+        CallJSAndDispatch(
+            function, context, Int32Constant(arg_count), receiver_mode,
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex)),
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex + 1)));
+        break;
+      case 3:
+        CallJSAndDispatch(
+            function, context, Int32Constant(arg_count), receiver_mode,
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex)),
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex + 1)),
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex + 2)));
+        break;
+      default:
+        UNREACHABLE();
     }
-    // The bytecode argument operands are copied into the remaining argument
-    // parameters.
-    for (int i = 0; i < (kReceiverOperandCount + arg_count); ++i) {
-      Node* reg = BytecodeOperandReg(kFirstArgumentOperandIndex + i);
-      temp[parameter_index++] = LoadRegister(reg);
-    }
-
-    DCHECK_EQ(parameter_index,
-              kReceiverParameterIndex + kReceiverParameterCount + arg_count);
-    temp[parameter_index] = GetContext();
-
-    Node* result = CallStubN(call_ic.descriptor(), 1,
-                             arg_count + kBoilerplateParameterCount, &temp[0]);
-    SetAccumulator(result);
-    Dispatch();
   }
 };
 
@@ -2221,11 +1830,11 @@ class InterpreterJSCallAssembler : public InterpreterAssembler {
 // |arg_count| arguments in subsequent registers. Collect type feedback
 // into |feedback_slot_id|
 IGNITION_HANDLER(CallAnyReceiver, InterpreterJSCallAssembler) {
-  JSCall(ConvertReceiverMode::kAny, TailCallMode::kDisallow);
+  JSCall(ConvertReceiverMode::kAny);
 }
 
 IGNITION_HANDLER(CallProperty, InterpreterJSCallAssembler) {
-  JSCall(ConvertReceiverMode::kNotNullOrUndefined, TailCallMode::kDisallow);
+  JSCall(ConvertReceiverMode::kNotNullOrUndefined);
 }
 
 IGNITION_HANDLER(CallProperty0, InterpreterJSCallAssembler) {
@@ -2241,7 +1850,7 @@ IGNITION_HANDLER(CallProperty2, InterpreterJSCallAssembler) {
 }
 
 IGNITION_HANDLER(CallUndefinedReceiver, InterpreterJSCallAssembler) {
-  JSCall(ConvertReceiverMode::kNullOrUndefined, TailCallMode::kDisallow);
+  JSCall(ConvertReceiverMode::kNullOrUndefined);
 }
 
 IGNITION_HANDLER(CallUndefinedReceiver0, InterpreterJSCallAssembler) {
@@ -2254,15 +1863,6 @@ IGNITION_HANDLER(CallUndefinedReceiver1, InterpreterJSCallAssembler) {
 
 IGNITION_HANDLER(CallUndefinedReceiver2, InterpreterJSCallAssembler) {
   JSCallN(2, ConvertReceiverMode::kNullOrUndefined);
-}
-
-// TailCall <callable> <receiver> <arg_count> <feedback_slot_id>
-//
-// Tail call a JSfunction or Callable in |callable| with the |receiver| and
-// |arg_count| arguments in subsequent registers. Collect type feedback
-// into |feedback_slot_id|
-IGNITION_HANDLER(TailCall, InterpreterJSCallAssembler) {
-  JSCall(ConvertReceiverMode::kAny, TailCallMode::kAllow);
 }
 
 // CallRuntime <function_id> <first_arg> <arg_count>
@@ -2327,12 +1927,10 @@ IGNITION_HANDLER(CallRuntimeForPair, InterpreterAssembler) {
 // Call the JS runtime function that has the |context_index| with the receiver
 // in register |receiver| and |arg_count| arguments in subsequent registers.
 IGNITION_HANDLER(CallJSRuntime, InterpreterAssembler) {
-  Node* context_index = BytecodeOperandIdx(0);
+  Node* context_index = BytecodeOperandNativeContextIndex(0);
   Node* receiver_reg = BytecodeOperandReg(1);
   Node* first_arg = RegisterLocation(receiver_reg);
-  Node* receiver_args_count = BytecodeOperandCount(2);
-  Node* receiver_count = Int32Constant(1);
-  Node* args_count = Int32Sub(receiver_args_count, receiver_count);
+  Node* args_count = BytecodeOperandCount(2);
 
   // Get the function to call from the native context.
   Node* context = GetContext();
@@ -2340,10 +1938,8 @@ IGNITION_HANDLER(CallJSRuntime, InterpreterAssembler) {
   Node* function = LoadContextElement(native_context, context_index);
 
   // Call the function.
-  Node* result = CallJS(function, context, first_arg, args_count,
-                        ConvertReceiverMode::kAny, TailCallMode::kDisallow);
-  SetAccumulator(result);
-  Dispatch();
+  CallJSAndDispatch(function, context, first_arg, args_count,
+                    ConvertReceiverMode::kNullOrUndefined);
 }
 
 // CallWithSpread <callable> <first_arg> <arg_count>
@@ -2360,12 +1956,13 @@ IGNITION_HANDLER(CallWithSpread, InterpreterAssembler) {
   Node* receiver_args_count = BytecodeOperandCount(2);
   Node* receiver_count = Int32Constant(1);
   Node* args_count = Int32Sub(receiver_args_count, receiver_count);
+  Node* slot_id = BytecodeOperandIdx(3);
+  Node* feedback_vector = LoadFeedbackVector();
   Node* context = GetContext();
 
   // Call into Runtime function CallWithSpread which does everything.
-  Node* result = CallJSWithSpread(callable, context, receiver_arg, args_count);
-  SetAccumulator(result);
-  Dispatch();
+  CallJSWithSpreadAndDispatch(callable, context, receiver_arg, args_count,
+                              slot_id, feedback_vector);
 }
 
 // ConstructWithSpread <first_arg> <arg_count>
@@ -2381,9 +1978,12 @@ IGNITION_HANDLER(ConstructWithSpread, InterpreterAssembler) {
   Node* first_arg_reg = BytecodeOperandReg(1);
   Node* first_arg = RegisterLocation(first_arg_reg);
   Node* args_count = BytecodeOperandCount(2);
+  Node* slot_id = BytecodeOperandIdx(3);
+  Node* feedback_vector = LoadFeedbackVector();
   Node* context = GetContext();
-  Node* result = ConstructWithSpread(constructor, context, new_target,
-                                     first_arg, args_count);
+  Node* result =
+      ConstructWithSpread(constructor, context, new_target, first_arg,
+                          args_count, slot_id, feedback_vector);
   SetAccumulator(result);
   Dispatch();
 }
@@ -2529,7 +2129,8 @@ IGNITION_HANDLER(TestIn, InterpreterAssembler) {
   Node* property = LoadRegister(reg_index);
   Node* object = GetAccumulator();
   Node* context = GetContext();
-  SetAccumulator(HasProperty(object, property, context));
+
+  SetAccumulator(HasProperty(object, property, context, kHasProperty));
   Dispatch();
 }
 
@@ -2559,12 +2160,7 @@ IGNITION_HANDLER(TestUndetectable, InterpreterAssembler) {
   GotoIf(TaggedIsSmi(object), &end);
 
   // If it is a HeapObject, load the map and check for undetectable bit.
-  Node* map = LoadMap(object);
-  Node* map_bitfield = LoadMapBitField(map);
-  Node* map_undetectable =
-      Word32And(map_bitfield, Int32Constant(1 << Map::kIsUndetectable));
-  Node* result =
-      SelectBooleanConstant(Word32NotEqual(map_undetectable, Int32Constant(0)));
+  Node* result = SelectBooleanConstant(IsUndetectableMap(LoadMap(object)));
   SetAccumulator(result);
   Goto(&end);
 
@@ -2615,16 +2211,15 @@ IGNITION_HANDLER(TestTypeOf, InterpreterAssembler) {
   int32_t cases[] = {TYPEOF_LITERAL_LIST(CASE)};
 #undef CASE
 
-  Label if_true(this), if_false(this), end(this), abort(this, Label::kDeferred);
+  Label if_true(this), if_false(this), end(this);
 
-  Switch(literal_flag, &abort, cases, labels, arraysize(cases));
+  // We juse use the final label as the default and properly CSA_ASSERT
+  // that the {literal_flag} is valid here; this significantly improves
+  // the generated code (compared to having a default label that aborts).
+  unsigned const num_cases = arraysize(cases);
+  CSA_ASSERT(this, Uint32LessThan(literal_flag, Int32Constant(num_cases)));
+  Switch(literal_flag, labels[num_cases - 1], cases, labels, num_cases - 1);
 
-  BIND(&abort);
-  {
-    Comment("Abort");
-    Abort(BailoutReason::kUnexpectedTestTypeofLiteralFlag);
-    Goto(&if_false);
-  }
   BIND(&if_number);
   {
     Comment("IfNumber");
@@ -2654,12 +2249,8 @@ IGNITION_HANDLER(TestTypeOf, InterpreterAssembler) {
     Comment("IfUndefined");
     GotoIf(TaggedIsSmi(object), &if_false);
     // Check it is not null and the map has the undetectable bit set.
-    GotoIf(WordEqual(object, NullConstant()), &if_false);
-    Node* map_bitfield = LoadMapBitField(LoadMap(object));
-    Node* undetectable_bit =
-        Word32And(map_bitfield, Int32Constant(1 << Map::kIsUndetectable));
-    Branch(Word32Equal(undetectable_bit, Int32Constant(0)), &if_false,
-           &if_true);
+    GotoIf(IsNull(object), &if_false);
+    Branch(IsUndetectableMap(LoadMap(object)), &if_true, &if_false);
   }
   BIND(&if_function);
   {
@@ -2987,29 +2578,6 @@ IGNITION_HANDLER(JumpIfJSReceiverConstant, InterpreterAssembler) {
   Dispatch();
 }
 
-// JumpIfNotHole <imm>
-//
-// Jump by the number of bytes represented by an immediate operand if the object
-// referenced by the accumulator is the hole.
-IGNITION_HANDLER(JumpIfNotHole, InterpreterAssembler) {
-  Node* accumulator = GetAccumulator();
-  Node* the_hole_value = HeapConstant(isolate()->factory()->the_hole_value());
-  Node* relative_jump = BytecodeOperandUImmWord(0);
-  JumpIfWordNotEqual(accumulator, the_hole_value, relative_jump);
-}
-
-// JumpIfNotHoleConstant <idx>
-//
-// Jump by the number of bytes in the Smi in the |idx| entry in the constant
-// pool if the object referenced by the accumulator is the hole constant.
-IGNITION_HANDLER(JumpIfNotHoleConstant, InterpreterAssembler) {
-  Node* accumulator = GetAccumulator();
-  Node* the_hole_value = HeapConstant(isolate()->factory()->the_hole_value());
-  Node* index = BytecodeOperandIdx(0);
-  Node* relative_jump = LoadAndUntagConstantPoolEntry(index);
-  JumpIfWordNotEqual(accumulator, the_hole_value, relative_jump);
-}
-
 // JumpLoop <imm> <loop_depth>
 //
 // Jump by the number of bytes represented by the immediate operand |imm|. Also
@@ -3075,15 +2643,15 @@ IGNITION_HANDLER(SwitchOnSmiNoFeedback, InterpreterAssembler) {
 // Creates a regular expression literal for literal index <literal_idx> with
 // <flags> and the pattern in <pattern_idx>.
 IGNITION_HANDLER(CreateRegExpLiteral, InterpreterAssembler) {
-  Node* index = BytecodeOperandIdx(0);
-  Node* pattern = LoadConstantPoolEntry(index);
-  Node* literal_index = BytecodeOperandIdxSmi(1);
+  Node* pattern_index = BytecodeOperandIdx(0);
+  Node* pattern = LoadConstantPoolEntry(pattern_index);
+  Node* feedback_vector = LoadFeedbackVector();
+  Node* slot_id = BytecodeOperandIdx(1);
   Node* flags = SmiFromWord32(BytecodeOperandFlag(2));
-  Node* closure = LoadRegister(Register::function_closure());
   Node* context = GetContext();
   ConstructorBuiltinsAssembler constructor_assembler(state());
-  Node* result = constructor_assembler.EmitFastCloneRegExp(
-      closure, literal_index, pattern, flags, context);
+  Node* result = constructor_assembler.EmitCreateRegExpLiteral(
+      feedback_vector, slot_id, pattern, flags, context);
   SetAccumulator(result);
   Dispatch();
 }
@@ -3093,21 +2661,22 @@ IGNITION_HANDLER(CreateRegExpLiteral, InterpreterAssembler) {
 // Creates an array literal for literal index <literal_idx> with
 // CreateArrayLiteral flags <flags> and constant elements in <element_idx>.
 IGNITION_HANDLER(CreateArrayLiteral, InterpreterAssembler) {
-  Node* literal_index = BytecodeOperandIdxSmi(1);
-  Node* closure = LoadRegister(Register::function_closure());
+  Node* feedback_vector = LoadFeedbackVector();
+  Node* slot_id = BytecodeOperandIdx(1);
   Node* context = GetContext();
   Node* bytecode_flags = BytecodeOperandFlag(2);
 
   Label fast_shallow_clone(this), call_runtime(this, Label::kDeferred);
-  Branch(
-      IsSetWord32<CreateArrayLiteralFlags::FastShallowCloneBit>(bytecode_flags),
-      &fast_shallow_clone, &call_runtime);
+  Branch(IsSetWord32<CreateArrayLiteralFlags::FastCloneSupportedBit>(
+             bytecode_flags),
+         &fast_shallow_clone, &call_runtime);
 
   BIND(&fast_shallow_clone);
   {
     ConstructorBuiltinsAssembler constructor_assembler(state());
-    Node* result = constructor_assembler.EmitFastCloneShallowArray(
-        closure, literal_index, context, &call_runtime, TRACK_ALLOCATION_SITE);
+    Node* result = constructor_assembler.EmitCreateShallowArrayLiteral(
+        feedback_vector, slot_id, context, &call_runtime,
+        TRACK_ALLOCATION_SITE);
     SetAccumulator(result);
     Dispatch();
   }
@@ -3119,11 +2688,26 @@ IGNITION_HANDLER(CreateArrayLiteral, InterpreterAssembler) {
     Node* flags = SmiTag(flags_raw);
     Node* index = BytecodeOperandIdx(0);
     Node* constant_elements = LoadConstantPoolEntry(index);
-    Node* result = CallRuntime(Runtime::kCreateArrayLiteral, context, closure,
-                               literal_index, constant_elements, flags);
+    Node* result =
+        CallRuntime(Runtime::kCreateArrayLiteral, context, feedback_vector,
+                    SmiTag(slot_id), constant_elements, flags);
     SetAccumulator(result);
     Dispatch();
   }
+}
+
+// CreateEmptyArrayLiteral <literal_idx>
+//
+// Creates an empty JSArray literal for literal index <literal_idx>.
+IGNITION_HANDLER(CreateEmptyArrayLiteral, InterpreterAssembler) {
+  Node* feedback_vector = LoadFeedbackVector();
+  Node* slot_id = BytecodeOperandIdx(0);
+  Node* context = GetContext();
+  ConstructorBuiltinsAssembler constructor_assembler(state());
+  Node* result = constructor_assembler.EmitCreateEmptyArrayLiteral(
+      feedback_vector, slot_id, context);
+  SetAccumulator(result);
+  Dispatch();
 }
 
 // CreateObjectLiteral <element_idx> <literal_idx> <flags>
@@ -3131,9 +2715,9 @@ IGNITION_HANDLER(CreateArrayLiteral, InterpreterAssembler) {
 // Creates an object literal for literal index <literal_idx> with
 // CreateObjectLiteralFlags <flags> and constant elements in <element_idx>.
 IGNITION_HANDLER(CreateObjectLiteral, InterpreterAssembler) {
-  Node* literal_index = BytecodeOperandIdxSmi(1);
+  Node* feedback_vector = LoadFeedbackVector();
+  Node* slot_id = BytecodeOperandIdx(1);
   Node* bytecode_flags = BytecodeOperandFlag(2);
-  Node* closure = LoadRegister(Register::function_closure());
 
   // Check if we can do a fast clone or have to call the runtime.
   Label if_fast_clone(this), if_not_fast_clone(this, Label::kDeferred);
@@ -3143,10 +2727,10 @@ IGNITION_HANDLER(CreateObjectLiteral, InterpreterAssembler) {
 
   BIND(&if_fast_clone);
   {
-    // If we can do a fast clone do the fast-path in FastCloneShallowObjectStub.
+    // If we can do a fast clone do the fast-path in CreateShallowObjectLiteral.
     ConstructorBuiltinsAssembler constructor_assembler(state());
-    Node* result = constructor_assembler.EmitFastCloneShallowObject(
-        &if_not_fast_clone, closure, literal_index);
+    Node* result = constructor_assembler.EmitCreateShallowObjectLiteral(
+        feedback_vector, slot_id, &if_not_fast_clone);
     StoreRegister(result, BytecodeOperandReg(3));
     Dispatch();
   }
@@ -3155,19 +2739,46 @@ IGNITION_HANDLER(CreateObjectLiteral, InterpreterAssembler) {
   {
     // If we can't do a fast clone, call into the runtime.
     Node* index = BytecodeOperandIdx(0);
-    Node* constant_elements = LoadConstantPoolEntry(index);
+    Node* boilerplate_description = LoadConstantPoolEntry(index);
     Node* context = GetContext();
 
     Node* flags_raw = DecodeWordFromWord32<CreateObjectLiteralFlags::FlagsBits>(
         bytecode_flags);
     Node* flags = SmiTag(flags_raw);
 
-    Node* result = CallRuntime(Runtime::kCreateObjectLiteral, context, closure,
-                               literal_index, constant_elements, flags);
+    Node* result =
+        CallRuntime(Runtime::kCreateObjectLiteral, context, feedback_vector,
+                    SmiTag(slot_id), boilerplate_description, flags);
     StoreRegister(result, BytecodeOperandReg(3));
     // TODO(klaasb) build a single dispatch once the call is inlined
     Dispatch();
   }
+}
+
+// CreateEmptyObjectLiteral
+//
+// Creates an empty JSObject literal.
+IGNITION_HANDLER(CreateEmptyObjectLiteral, InterpreterAssembler) {
+  Node* context = GetContext();
+  ConstructorBuiltinsAssembler constructor_assembler(state());
+  Node* result = constructor_assembler.EmitCreateEmptyObjectLiteral(context);
+  SetAccumulator(result);
+  Dispatch();
+}
+
+// GetTemplateObject
+//
+// Creates the template to pass for tagged templates and returns it in the
+// accumulator, creating and caching the site object on-demand as per the
+// specification.
+IGNITION_HANDLER(GetTemplateObject, InterpreterAssembler) {
+  Node* description_index = BytecodeOperandIdx(0);
+  Node* description = LoadConstantPoolEntry(description_index);
+  Node* context = GetContext();
+
+  Node* result = CallRuntime(Runtime::kGetTemplateObject, context, description);
+  SetAccumulator(result);
+  Dispatch();
 }
 
 // CreateClosure <index> <slot> <tenured>
@@ -3297,13 +2908,14 @@ IGNITION_HANDLER(CreateMappedArguments, InterpreterAssembler) {
   // duplicate parameters.
   Node* shared_info =
       LoadObjectField(closure, JSFunction::kSharedFunctionInfoOffset);
-  Node* compiler_hints = LoadObjectField(
-      shared_info, SharedFunctionInfo::kHasDuplicateParametersByteOffset,
-      MachineType::Uint8());
-  Node* duplicate_parameters_bit = Int32Constant(
-      1 << SharedFunctionInfo::kHasDuplicateParametersBitWithinByte);
-  Node* compare = Word32And(compiler_hints, duplicate_parameters_bit);
-  Branch(compare, &if_duplicate_parameters, &if_not_duplicate_parameters);
+  Node* compiler_hints =
+      LoadObjectField(shared_info, SharedFunctionInfo::kCompilerHintsOffset,
+                      MachineType::Uint32());
+  Node* has_duplicate_parameters =
+      IsSetWord32<SharedFunctionInfo::HasDuplicateParametersBit>(
+          compiler_hints);
+  Branch(has_duplicate_parameters, &if_duplicate_parameters,
+         &if_not_duplicate_parameters);
 
   BIND(&if_not_duplicate_parameters);
   {
@@ -3405,6 +3017,15 @@ IGNITION_HANDLER(ReThrow, InterpreterAssembler) {
   Abort(kUnexpectedReturnFromThrow);
 }
 
+// Abort <bailout_reason>
+//
+// Aborts execution (via a call to the runtime function).
+IGNITION_HANDLER(Abort, InterpreterAssembler) {
+  Node* reason = BytecodeOperandIdx(0);
+  CallRuntime(Runtime::kAbort, NoContextConstant(), SmiTag(reason));
+  Unreachable();
+}
+
 // Return
 //
 // Return the value in the accumulator.
@@ -3412,6 +3033,65 @@ IGNITION_HANDLER(Return, InterpreterAssembler) {
   UpdateInterruptBudgetOnReturn();
   Node* accumulator = GetAccumulator();
   Return(accumulator);
+}
+
+// ThrowReferenceErrorIfHole <variable_name>
+//
+// Throws an exception if the value in the accumulator is TheHole.
+IGNITION_HANDLER(ThrowReferenceErrorIfHole, InterpreterAssembler) {
+  Node* value = GetAccumulator();
+  Node* the_hole_value = HeapConstant(isolate()->factory()->the_hole_value());
+
+  Label throw_error(this, Label::kDeferred);
+  GotoIf(WordEqual(value, the_hole_value), &throw_error);
+  Dispatch();
+
+  BIND(&throw_error);
+  {
+    Node* name = LoadConstantPoolEntry(BytecodeOperandIdx(0));
+    CallRuntime(Runtime::kThrowReferenceError, GetContext(), name);
+    // We shouldn't ever return from a throw.
+    Abort(kUnexpectedReturnFromThrow);
+  }
+}
+
+// ThrowSuperNotCalledIfHole
+//
+// Throws an exception if the value in the accumulator is TheHole.
+IGNITION_HANDLER(ThrowSuperNotCalledIfHole, InterpreterAssembler) {
+  Node* value = GetAccumulator();
+  Node* the_hole_value = HeapConstant(isolate()->factory()->the_hole_value());
+
+  Label throw_error(this, Label::kDeferred);
+  GotoIf(WordEqual(value, the_hole_value), &throw_error);
+  Dispatch();
+
+  BIND(&throw_error);
+  {
+    CallRuntime(Runtime::kThrowSuperNotCalled, GetContext());
+    // We shouldn't ever return from a throw.
+    Abort(kUnexpectedReturnFromThrow);
+  }
+}
+
+// ThrowSuperAlreadyCalledIfNotHole
+//
+// Throws SuperAleradyCalled exception if the value in the accumulator is not
+// TheHole.
+IGNITION_HANDLER(ThrowSuperAlreadyCalledIfNotHole, InterpreterAssembler) {
+  Node* value = GetAccumulator();
+  Node* the_hole_value = HeapConstant(isolate()->factory()->the_hole_value());
+
+  Label throw_error(this, Label::kDeferred);
+  GotoIf(WordNotEqual(value, the_hole_value), &throw_error);
+  Dispatch();
+
+  BIND(&throw_error);
+  {
+    CallRuntime(Runtime::kThrowSuperAlreadyCalledError, GetContext());
+    // We shouldn't ever return from a throw.
+    Abort(kUnexpectedReturnFromThrow);
+  }
 }
 
 // Debugger
@@ -3438,6 +3118,20 @@ IGNITION_HANDLER(Debugger, InterpreterAssembler) {
 DEBUG_BREAK_BYTECODE_LIST(DEBUG_BREAK);
 #undef DEBUG_BREAK
 
+// IncBlockCounter <slot>
+//
+// Increment the execution count for the given slot. Used for block code
+// coverage.
+IGNITION_HANDLER(IncBlockCounter, InterpreterAssembler) {
+  Node* closure = LoadRegister(Register::function_closure());
+  Node* coverage_array_slot = BytecodeOperandIdxSmi(0);
+  Node* context = GetContext();
+
+  CallRuntime(Runtime::kIncBlockCounter, context, closure, coverage_array_slot);
+
+  Dispatch();
+}
+
 class InterpreterForInPrepareAssembler : public InterpreterAssembler {
  public:
   InterpreterForInPrepareAssembler(CodeAssemblerState* state, Bytecode bytecode,
@@ -3454,51 +3148,100 @@ class InterpreterForInPrepareAssembler : public InterpreterAssembler {
   }
 };
 
-// ForInPrepare <receiver> <cache_info_triple>
+// ForInEnumerate <receiver>
 //
-// Returns state for for..in loop execution based on the object in the register
-// |receiver|. The object must not be null or undefined and must have been
-// converted to a receiver already.
+// Enumerates the enumerable keys of the |receiver| and either returns the
+// map of the |receiver| if it has a usable enum cache or a fixed array
+// with the keys to enumerate in the accumulator.
+IGNITION_HANDLER(ForInEnumerate, InterpreterAssembler) {
+  Node* receiver_register = BytecodeOperandReg(0);
+  Node* receiver = LoadRegister(receiver_register);
+  Node* context = GetContext();
+
+  Label if_empty(this), if_runtime(this, Label::kDeferred);
+  Node* receiver_map = CheckEnumCache(receiver, &if_empty, &if_runtime);
+  SetAccumulator(receiver_map);
+  Dispatch();
+
+  BIND(&if_empty);
+  {
+    Node* result = EmptyFixedArrayConstant();
+    SetAccumulator(result);
+    Dispatch();
+  }
+
+  BIND(&if_runtime);
+  {
+    Node* result = CallRuntime(Runtime::kForInEnumerate, context, receiver);
+    SetAccumulator(result);
+    Dispatch();
+  }
+}
+
+// ForInPrepare <cache_info_triple>
+//
+// Returns state for for..in loop execution based on the enumerator in
+// the accumulator register, which is the result of calling ForInEnumerate
+// on a JSReceiver object.
 // The result is output in registers |cache_info_triple| to
 // |cache_info_triple + 2|, with the registers holding cache_type, cache_array,
 // and cache_length respectively.
 IGNITION_HANDLER(ForInPrepare, InterpreterForInPrepareAssembler) {
-  Node* object_register = BytecodeOperandReg(0);
-  Node* output_register = BytecodeOperandReg(1);
-  Node* receiver = LoadRegister(object_register);
-  Node* context = GetContext();
+  Node* enumerator = GetAccumulator();
+  Node* output_register = BytecodeOperandReg(0);
+  Node* vector_index = BytecodeOperandIdx(1);
+  Node* feedback_vector = LoadFeedbackVector();
 
-  Node* cache_type;
-  Node* cache_array;
-  Node* cache_length;
-  Label call_runtime(this, Label::kDeferred),
-      nothing_to_iterate(this, Label::kDeferred);
+  // The {enumerator} is either a Map or a FixedArray.
+  CSA_ASSERT(this, TaggedIsNotSmi(enumerator));
 
-  ForInBuiltinsAssembler forin_assembler(state());
-  std::tie(cache_type, cache_array, cache_length) =
-      forin_assembler.EmitForInPrepare(receiver, context, &call_runtime,
-                                       &nothing_to_iterate);
+  // Check if we're using an enum cache.
+  Label if_fast(this), if_slow(this);
+  Branch(IsMap(enumerator), &if_fast, &if_slow);
 
-  BuildForInPrepareResult(output_register, cache_type, cache_array,
-                          cache_length);
-  Dispatch();
-
-  BIND(&call_runtime);
+  BIND(&if_fast);
   {
-    Node* result_triple =
-        CallRuntime(Runtime::kForInPrepare, context, receiver);
-    Node* cache_type = Projection(0, result_triple);
-    Node* cache_array = Projection(1, result_triple);
-    Node* cache_length = Projection(2, result_triple);
+    // Load the enumeration length and cache from the {enumerator}.
+    Node* enum_length = LoadMapEnumLength(enumerator);
+    CSA_ASSERT(this, WordNotEqual(enum_length,
+                                  IntPtrConstant(kInvalidEnumCacheSentinel)));
+    Node* descriptors = LoadMapDescriptors(enumerator);
+    Node* enum_cache =
+        LoadObjectField(descriptors, DescriptorArray::kEnumCacheOffset);
+    Node* enum_keys = LoadObjectField(enum_cache, EnumCache::kKeysOffset);
+
+    // Check if we have enum indices available.
+    Node* enum_indices = LoadObjectField(enum_cache, EnumCache::kIndicesOffset);
+    Node* enum_indices_length = LoadAndUntagFixedArrayBaseLength(enum_indices);
+    Node* feedback = SelectSmiConstant(
+        IntPtrLessThanOrEqual(enum_length, enum_indices_length),
+        ForInFeedback::kEnumCacheKeysAndIndices, ForInFeedback::kEnumCacheKeys);
+    UpdateFeedback(feedback, feedback_vector, vector_index);
+
+    // Construct the cache info triple.
+    Node* cache_type = enumerator;
+    Node* cache_array = enum_keys;
+    Node* cache_length = SmiTag(enum_length);
     BuildForInPrepareResult(output_register, cache_type, cache_array,
                             cache_length);
     Dispatch();
   }
-  BIND(&nothing_to_iterate);
+
+  BIND(&if_slow);
   {
-    // Receiver is null or undefined or descriptors are zero length.
-    Node* zero = SmiConstant(0);
-    BuildForInPrepareResult(output_register, zero, zero, zero);
+    // The {enumerator} is a FixedArray with all the keys to iterate.
+    CSA_ASSERT(this, IsFixedArray(enumerator));
+
+    // Record the fact that we hit the for-in slow-path.
+    UpdateFeedback(SmiConstant(ForInFeedback::kAny), feedback_vector,
+                   vector_index);
+
+    // Construct the cache info triple.
+    Node* cache_type = enumerator;
+    Node* cache_array = enumerator;
+    Node* cache_length = LoadFixedArrayBaseLength(enumerator);
+    BuildForInPrepareResult(output_register, cache_type, cache_array,
+                            cache_length);
     Dispatch();
   }
 }
@@ -3515,6 +3258,8 @@ IGNITION_HANDLER(ForInNext, InterpreterAssembler) {
   Node* cache_type = LoadRegister(cache_type_reg);
   Node* cache_array_reg = NextRegister(cache_type_reg);
   Node* cache_array = LoadRegister(cache_array_reg);
+  Node* vector_index = BytecodeOperandIdx(3);
+  Node* feedback_vector = LoadFeedbackVector();
 
   // Load the next key from the enumeration array.
   Node* key = LoadFixedArrayElement(cache_array, index, 0,
@@ -3532,18 +3277,13 @@ IGNITION_HANDLER(ForInNext, InterpreterAssembler) {
   }
   BIND(&if_slow);
   {
-    // Record the fact that we hit the for-in slow path.
-    Node* vector_index = BytecodeOperandIdx(3);
-    Node* feedback_vector = LoadFeedbackVector();
-    Node* megamorphic_sentinel =
-        HeapConstant(FeedbackVector::MegamorphicSentinel(isolate()));
-    StoreFixedArrayElement(feedback_vector, vector_index, megamorphic_sentinel,
-                           SKIP_WRITE_BARRIER);
+    // Record the fact that we hit the for-in slow-path.
+    UpdateFeedback(SmiConstant(ForInFeedback::kAny), feedback_vector,
+                   vector_index);
 
     // Need to filter the {key} for the {receiver}.
     Node* context = GetContext();
-    Callable callable = CodeFactory::ForInFilter(isolate());
-    Node* result = CallStub(callable, context, key, receiver);
+    Node* result = CallBuiltin(Builtins::kForInFilter, context, key, receiver);
     SetAccumulator(result);
     Dispatch();
   }
@@ -3582,7 +3322,7 @@ IGNITION_HANDLER(ForInContinue, InterpreterAssembler) {
 IGNITION_HANDLER(ForInStep, InterpreterAssembler) {
   Node* index_reg = BytecodeOperandReg(0);
   Node* index = LoadRegister(index_reg);
-  Node* one = SmiConstant(Smi::FromInt(1));
+  Node* one = SmiConstant(1);
   Node* result = SmiAdd(index, one);
   SetAccumulator(result);
   Dispatch();
@@ -3607,19 +3347,15 @@ IGNITION_HANDLER(ExtraWide, InterpreterAssembler) {
 // An invalid bytecode aborting execution if dispatched.
 IGNITION_HANDLER(Illegal, InterpreterAssembler) { Abort(kInvalidBytecode); }
 
-// Nop
-//
-// No operation.
-IGNITION_HANDLER(Nop, InterpreterAssembler) { Dispatch(); }
-
-// SuspendGenerator <generator>
+// SuspendGenerator <generator> <first input register> <register count>
+// <suspend_id>
 //
 // Exports the register file and stores it into the generator.  Also stores the
-// current context, the state given in the accumulator, and the current bytecode
-// offset (for debugging purposes) into the generator.
+// current context, |suspend_id|, and the current bytecode offset (for debugging
+// purposes) into the generator.
 IGNITION_HANDLER(SuspendGenerator, InterpreterAssembler) {
   Node* generator_reg = BytecodeOperandReg(0);
-  Node* flags = BytecodeOperandFlag(1);
+
   Node* generator = LoadRegister(generator_reg);
 
   Label if_stepping(this, Label::kDeferred), ok(this);
@@ -3635,47 +3371,24 @@ IGNITION_HANDLER(SuspendGenerator, InterpreterAssembler) {
   Node* array =
       LoadObjectField(generator, JSGeneratorObject::kRegisterFileOffset);
   Node* context = GetContext();
-  Node* state = GetAccumulator();
+  Node* suspend_id = BytecodeOperandUImmSmi(3);
 
-  ExportRegisterFile(array);
+  // Bytecode operand 1 should be always 0 (we are always store registers
+  // from the beginning).
+  CSA_ASSERT(this, WordEqual(BytecodeOperandReg(1),
+                             IntPtrConstant(Register(0).ToOperand())));
+  // Bytecode operand 2 is the number of registers to store to the generator.
+  Node* register_count = ChangeUint32ToWord(BytecodeOperandCount(2));
+  ExportRegisterFile(array, register_count);
   StoreObjectField(generator, JSGeneratorObject::kContextOffset, context);
-  StoreObjectField(generator, JSGeneratorObject::kContinuationOffset, state);
+  StoreObjectField(generator, JSGeneratorObject::kContinuationOffset,
+                   suspend_id);
 
-  Label if_asyncgeneratorawait(this), if_notasyncgeneratorawait(this),
-      merge(this);
-
-  // Calculate bytecode offset to store in the [input_or_debug_pos] or
-  // [await_input_or_debug_pos] fields, to be used by the inspector.
+  // Store the bytecode offset in the [input_or_debug_pos] field, to be used by
+  // the inspector.
   Node* offset = SmiTag(BytecodeOffset());
-
-  using AsyncGeneratorAwaitBits = SuspendGeneratorBytecodeFlags::FlagsBits;
-  Branch(Word32Equal(DecodeWord32<AsyncGeneratorAwaitBits>(flags),
-                     Int32Constant(
-                         static_cast<int>(SuspendFlags::kAsyncGeneratorAwait))),
-         &if_asyncgeneratorawait, &if_notasyncgeneratorawait);
-
-  BIND(&if_notasyncgeneratorawait);
-  {
-    // For ordinary yields (and for AwaitExpressions in Async Functions, which
-    // are implemented as ordinary yields), it is safe to write over the
-    // [input_or_debug_pos] field.
-    StoreObjectField(generator, JSGeneratorObject::kInputOrDebugPosOffset,
-                     offset);
-    Goto(&merge);
-  }
-
-  BIND(&if_asyncgeneratorawait);
-  {
-    // An AwaitExpression in an Async Generator requires writing to the
-    // [await_input_or_debug_pos] field.
-    CSA_ASSERT(this,
-               HasInstanceType(generator, JS_ASYNC_GENERATOR_OBJECT_TYPE));
-    StoreObjectField(
-        generator, JSAsyncGeneratorObject::kAwaitInputOrDebugPosOffset, offset);
-    Goto(&merge);
-  }
-
-  BIND(&merge);
+  StoreObjectField(generator, JSGeneratorObject::kInputOrDebugPosOffset,
+                   offset);
   Dispatch();
 
   BIND(&if_stepping);
@@ -3686,17 +3399,13 @@ IGNITION_HANDLER(SuspendGenerator, InterpreterAssembler) {
   }
 }
 
-// ResumeGenerator <generator>
+// RestoreGeneratorState <generator>
 //
-// Imports the register file stored in the generator. Also loads the
-// generator's state and stores it in the accumulator, before overwriting it
-// with kGeneratorExecuting.
-IGNITION_HANDLER(ResumeGenerator, InterpreterAssembler) {
+// Loads the generator's state and stores it in the accumulator,
+// before overwriting it with kGeneratorExecuting.
+IGNITION_HANDLER(RestoreGeneratorState, InterpreterAssembler) {
   Node* generator_reg = BytecodeOperandReg(0);
   Node* generator = LoadRegister(generator_reg);
-
-  ImportRegisterFile(
-      LoadObjectField(generator, JSGeneratorObject::kRegisterFileOffset));
 
   Node* old_state =
       LoadObjectField(generator, JSGeneratorObject::kContinuationOffset);
@@ -3708,6 +3417,28 @@ IGNITION_HANDLER(ResumeGenerator, InterpreterAssembler) {
   Dispatch();
 }
 
+// RestoreGeneratorRegisters <generator> <first output register> <register
+// count>
+//
+// Imports the register file stored in the generator.
+IGNITION_HANDLER(RestoreGeneratorRegisters, InterpreterAssembler) {
+  Node* generator_reg = BytecodeOperandReg(0);
+  // Bytecode operand 1 is the start register. It should always be 0, so let's
+  // ignore it.
+  CSA_ASSERT(this, WordEqual(BytecodeOperandReg(1),
+                             IntPtrConstant(Register(0).ToOperand())));
+  // Bytecode operand 2 is the number of registers to store to the generator.
+  Node* register_count = ChangeUint32ToWord(BytecodeOperandCount(2));
+
+  Node* generator = LoadRegister(generator_reg);
+
+  ImportRegisterFile(
+      LoadObjectField(generator, JSGeneratorObject::kRegisterFileOffset),
+      register_count);
+
+  Dispatch();
+}
+
 }  // namespace
 
 Handle<Code> GenerateBytecodeHandler(Isolate* isolate, Bytecode bytecode,
@@ -3715,7 +3446,7 @@ Handle<Code> GenerateBytecodeHandler(Isolate* isolate, Bytecode bytecode,
   Zone zone(isolate->allocator(), ZONE_NAME);
   InterpreterDispatchDescriptor descriptor(isolate);
   compiler::CodeAssemblerState state(
-      isolate, &zone, descriptor, Code::ComputeFlags(Code::BYTECODE_HANDLER),
+      isolate, &zone, descriptor, Code::BYTECODE_HANDLER,
       Bytecodes::ToString(bytecode), Bytecodes::ReturnCount(bytecode));
 
   switch (bytecode) {

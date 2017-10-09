@@ -95,7 +95,16 @@ for (var constructor of typedArrayConstructors) {
 for (var constructor1 of typedArrayConstructors) {
   for (var constructor2 of typedArrayConstructors) {
     testCustomSubclass(constructor1, constructor2);
+    testSpeciesConstructor(constructor1, constructor2);
   }
+}
+
+function testSpeciesConstructor(cons1, cons2) {
+  var ta = new cons1([1, 2, 3, 4, 5, 6]);
+  ta.constructor = {
+    [Symbol.species]: cons2
+  };
+  assertArrayEquals([4, 5, 6], ta.slice(3));
 }
 
 function testCustomSubclass(superClass, speciesClass) {
@@ -115,7 +124,7 @@ function testCustomSubclass(superClass, speciesClass) {
   // Custom constructor with shared buffer.
   exampleArray =  new Array(64).fill(0).map((v,i) => i);
   let filledBuffer = new Uint8Array(exampleArray).buffer;
-  // Create a view for the begining of the buffer.
+  // Create a view for the beginning of the buffer.
   let customArray2 = new superClass(filledBuffer, 0, 3);
   customArray2.constructor = {
     [Symbol.species]: function(length) {

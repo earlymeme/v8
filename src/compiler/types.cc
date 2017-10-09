@@ -145,8 +145,6 @@ Type::bitset BitsetType::Lub(Type* type) {
 Type::bitset BitsetType::Lub(i::Map* map) {
   DisallowHeapAllocation no_allocation;
   switch (map->instance_type()) {
-    case STRING_TYPE:
-    case ONE_BYTE_STRING_TYPE:
     case CONS_STRING_TYPE:
     case CONS_ONE_BYTE_STRING_TYPE:
     case THIN_STRING_TYPE:
@@ -159,16 +157,20 @@ Type::bitset BitsetType::Lub(i::Map* map) {
     case SHORT_EXTERNAL_STRING_TYPE:
     case SHORT_EXTERNAL_ONE_BYTE_STRING_TYPE:
     case SHORT_EXTERNAL_STRING_WITH_ONE_BYTE_DATA_TYPE:
-      return kOtherString;
-    case INTERNALIZED_STRING_TYPE:
-    case ONE_BYTE_INTERNALIZED_STRING_TYPE:
+      return kOtherNonSeqString;
+    case STRING_TYPE:
+    case ONE_BYTE_STRING_TYPE:
+      return kOtherSeqString;
     case EXTERNAL_INTERNALIZED_STRING_TYPE:
     case EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE:
     case EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE:
     case SHORT_EXTERNAL_INTERNALIZED_STRING_TYPE:
     case SHORT_EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE:
     case SHORT_EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE:
-      return kInternalizedString;
+      return kInternalizedNonSeqString;
+    case INTERNALIZED_STRING_TYPE:
+    case ONE_BYTE_INTERNALIZED_STRING_TYPE:
+      return kInternalizedSeqString;
     case SYMBOL_TYPE:
       return kSymbol;
     case ODDBALL_TYPE: {
@@ -220,51 +222,26 @@ Type::bitset BitsetType::Lub(i::Map* map) {
     case JS_DATA_VIEW_TYPE:
     case JS_SET_TYPE:
     case JS_MAP_TYPE:
-    case JS_SET_ITERATOR_TYPE:
-    case JS_MAP_ITERATOR_TYPE:
+    case JS_SET_KEY_VALUE_ITERATOR_TYPE:
+    case JS_SET_VALUE_ITERATOR_TYPE:
+    case JS_MAP_KEY_ITERATOR_TYPE:
+    case JS_MAP_KEY_VALUE_ITERATOR_TYPE:
+    case JS_MAP_VALUE_ITERATOR_TYPE:
     case JS_STRING_ITERATOR_TYPE:
     case JS_ASYNC_FROM_SYNC_ITERATOR_TYPE:
 
-    case JS_TYPED_ARRAY_KEY_ITERATOR_TYPE:
-    case JS_FAST_ARRAY_KEY_ITERATOR_TYPE:
-    case JS_GENERIC_ARRAY_KEY_ITERATOR_TYPE:
-    case JS_UINT8_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_INT8_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_UINT16_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_INT16_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_UINT32_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_INT32_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_FLOAT32_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_FLOAT64_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_UINT8_CLAMPED_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_HOLEY_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_HOLEY_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_HOLEY_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_GENERIC_ARRAY_KEY_VALUE_ITERATOR_TYPE:
-    case JS_UINT8_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_INT8_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_UINT16_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_INT16_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_UINT32_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_INT32_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_FLOAT32_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_FLOAT64_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_UINT8_CLAMPED_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_SMI_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_HOLEY_SMI_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_HOLEY_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_FAST_HOLEY_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE:
-    case JS_GENERIC_ARRAY_VALUE_ITERATOR_TYPE:
+#define ARRAY_ITERATOR_CASE(type) case type:
+      ARRAY_ITERATOR_TYPE_LIST(ARRAY_ITERATOR_CASE)
+#undef ARRAY_ITERATOR_CASE
 
     case JS_WEAK_MAP_TYPE:
     case JS_WEAK_SET_TYPE:
-    case JS_PROMISE_CAPABILITY_TYPE:
+    case PROMISE_CAPABILITY_TYPE:
     case JS_PROMISE_TYPE:
+    case WASM_MODULE_TYPE:
+    case WASM_INSTANCE_TYPE:
+    case WASM_MEMORY_TYPE:
+    case WASM_TABLE_TYPE:
       DCHECK(!map->is_callable());
       DCHECK(!map->is_undetectable());
       return kOtherObject;
@@ -285,10 +262,13 @@ Type::bitset BitsetType::Lub(i::Map* map) {
     case FUNCTION_TEMPLATE_INFO_TYPE:
     case ACCESSOR_PAIR_TYPE:
     case FIXED_ARRAY_TYPE:
+    case HASH_TABLE_TYPE:
     case FIXED_DOUBLE_ARRAY_TYPE:
     case BYTE_ARRAY_TYPE:
     case BYTECODE_ARRAY_TYPE:
+    case FEEDBACK_VECTOR_TYPE:
     case TRANSITION_ARRAY_TYPE:
+    case PROPERTY_ARRAY_TYPE:
     case FOREIGN_TYPE:
     case SCRIPT_TYPE:
     case CODE_TYPE:
@@ -296,6 +276,7 @@ Type::bitset BitsetType::Lub(i::Map* map) {
     case MODULE_TYPE:
     case MODULE_INFO_ENTRY_TYPE:
     case CELL_TYPE:
+    case BIGINT_TYPE:
       return kOtherInternal;
 
     // Remaining instance types are unsupported for now. If any of them do
@@ -318,15 +299,13 @@ Type::bitset BitsetType::Lub(i::Map* map) {
     case DEBUG_INFO_TYPE:
     case STACK_FRAME_INFO_TYPE:
     case WEAK_CELL_TYPE:
+    case SMALL_ORDERED_HASH_MAP_TYPE:
+    case SMALL_ORDERED_HASH_SET_TYPE:
     case PROTOTYPE_INFO_TYPE:
     case TUPLE2_TYPE:
     case TUPLE3_TYPE:
     case CONTEXT_EXTENSION_TYPE:
     case ASYNC_GENERATOR_REQUEST_TYPE:
-    case PADDING_TYPE_1:
-    case PADDING_TYPE_2:
-    case PADDING_TYPE_3:
-    case PADDING_TYPE_4:
       UNREACHABLE();
   }
   UNREACHABLE();
@@ -602,7 +581,7 @@ bool UnionType::Wellformed() {
   // 5. No element (except the bitset) is a subtype of any other.
   // 6. If there is a range, then the bitset type does not contain
   //    plain number bits.
-  DCHECK(this->Length() >= 2);       // (1)
+  DCHECK_LE(2, this->Length());      // (1)
   DCHECK(this->Get(0)->IsBitset());  // (2a)
 
   for (int i = 0; i < this->Length(); ++i) {
@@ -912,7 +891,7 @@ int Type::AddToUnion(Type* type, UnionType* result, int size, Zone* zone) {
 
 Type* Type::NormalizeUnion(Type* union_type, int size, Zone* zone) {
   UnionType* unioned = union_type->AsUnion();
-  DCHECK(size >= 1);
+  DCHECK_LE(1, size);
   DCHECK(unioned->Get(0)->IsBitset());
   // If the union has just one element, return it.
   if (size == 1) {
@@ -992,7 +971,7 @@ void BitsetType::Print(std::ostream& os,  // NOLINT
       bits -= subset;
     }
   }
-  DCHECK(bits == 0);
+  DCHECK_EQ(0, bits);
   os << ")";
 }
 

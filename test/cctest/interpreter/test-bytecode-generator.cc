@@ -72,7 +72,6 @@ static const char* kGoldenFileDirectory =
 class InitializedIgnitionHandleScope : public InitializedHandleScope {
  public:
   InitializedIgnitionHandleScope() {
-    i::FLAG_ignition = true;
     i::FLAG_always_opt = false;
     i::FLAG_allow_natives_syntax = true;
   }
@@ -2358,6 +2357,34 @@ TEST(Generators) {
                      LoadGolden("Generators.golden")));
 }
 
+TEST(AsyncGenerators) {
+  bool old_flag = i::FLAG_harmony_async_iteration;
+  i::FLAG_harmony_async_iteration = true;
+  InitializedIgnitionHandleScope scope;
+  BytecodeExpectationsPrinter printer(CcTest::isolate());
+  printer.set_wrap(false);
+  printer.set_test_function_name("f");
+
+  const char* snippets[] = {
+      "async function* f() { }\n"
+      "f();\n",
+
+      "async function* f() { yield 42 }\n"
+      "f();\n",
+
+      "async function* f() { for (let x of [42]) yield x }\n"
+      "f();\n",
+
+      "function* g() { yield 42 }\n"
+      "async function* f() { yield* g() }\n"
+      "f();\n",
+  };
+
+  CHECK(CompareTexts(BuildActual(printer, snippets),
+                     LoadGolden("AsyncGenerators.golden")));
+  i::FLAG_harmony_async_iteration = old_flag;
+}
+
 TEST(Modules) {
   InitializedIgnitionHandleScope scope;
   BytecodeExpectationsPrinter printer(CcTest::isolate());
@@ -2647,6 +2674,29 @@ TEST(StringConcat) {
   CHECK(CompareTexts(BuildActual(printer, snippets),
                      LoadGolden("StringConcat.golden")));
 }
+
+#undef XSTR
+#undef STR
+#undef UNIQUE_VAR
+#undef REPEAT_2
+#undef REPEAT_4
+#undef REPEAT_8
+#undef REPEAT_16
+#undef REPEAT_32
+#undef REPEAT_64
+#undef REPEAT_128
+#undef REPEAT_256
+#undef REPEAT_127
+#undef REPEAT_249
+#undef REPEAT_2_UNIQUE_VARS
+#undef REPEAT_4_UNIQUE_VARS
+#undef REPEAT_8_UNIQUE_VARS
+#undef REPEAT_16_UNIQUE_VARS
+#undef REPEAT_32_UNIQUE_VARS
+#undef REPEAT_64_UNIQUE_VARS
+#undef REPEAT_128_UNIQUE_VARS
+#undef REPEAT_250_UNIQUE_VARS
+#undef FUNC_ARG
 
 }  // namespace interpreter
 }  // namespace internal

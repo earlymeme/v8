@@ -7,7 +7,6 @@
 #include "src/base/atomicops.h"
 #include "src/compilation-info.h"
 #include "src/compiler.h"
-#include "src/full-codegen/full-codegen.h"
 #include "src/isolate.h"
 #include "src/objects-inl.h"
 #include "src/tracing/trace-event.h"
@@ -20,10 +19,13 @@ namespace {
 
 void DisposeCompilationJob(CompilationJob* job, bool restore_function_code) {
   if (restore_function_code) {
-    Handle<JSFunction> function = job->info()->closure();
-    function->ReplaceCode(function->shared()->code());
-    // TODO(mvstanton): We can't call ensureliterals here due to allocation,
-    // but we probably shouldn't call ReplaceCode either, as this
+    Handle<JSFunction> function = job->compilation_info()->closure();
+    function->set_code(function->shared()->code());
+    if (function->IsInOptimizationQueue()) {
+      function->ClearOptimizationMarker();
+    }
+    // TODO(mvstanton): We can't call EnsureLiterals here due to allocation,
+    // but we probably shouldn't call set_code either, as this
     // sometimes runs on the worker thread!
     // JSFunction::EnsureLiterals(function);
   }
@@ -194,9 +196,9 @@ void OptimizingCompileDispatcher::InstallOptimizedFunctions() {
       job = output_queue_.front();
       output_queue_.pop();
     }
-    CompilationInfo* info = job->info();
+    CompilationInfo* info = job->compilation_info();
     Handle<JSFunction> function(*info->closure());
-    if (function->IsOptimized()) {
+    if (function->HasOptimizedCode()) {
       if (FLAG_trace_concurrent_recompilation) {
         PrintF("  ** Aborting compilation for ");
         function->ShortPrint();

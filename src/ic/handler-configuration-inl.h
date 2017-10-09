@@ -13,6 +13,11 @@
 namespace v8 {
 namespace internal {
 
+// Decodes kind from Smi-handler.
+LoadHandler::Kind LoadHandler::GetHandlerKind(Smi* smi_handler) {
+  return KindBits::decode(smi_handler->value());
+}
+
 Handle<Smi> LoadHandler::LoadNormal(Isolate* isolate) {
   int config = KindBits::encode(kNormal);
   return handle(Smi::FromInt(config), isolate);
@@ -48,9 +53,20 @@ Handle<Smi> LoadHandler::LoadAccessor(Isolate* isolate, int descriptor) {
   return handle(Smi::FromInt(config), isolate);
 }
 
+Handle<Smi> LoadHandler::LoadProxy(Isolate* isolate) {
+  int config = KindBits::encode(kProxy);
+  return handle(Smi::FromInt(config), isolate);
+}
+
 Handle<Smi> LoadHandler::LoadApiGetter(Isolate* isolate, int descriptor) {
   int config = KindBits::encode(kConstant) | IsAccessorInfoBits::encode(true) |
                DescriptorBits::encode(descriptor);
+  return handle(Smi::FromInt(config), isolate);
+}
+
+Handle<Smi> LoadHandler::LoadModuleExport(Isolate* isolate, int index) {
+  int config =
+      KindBits::encode(kModuleExport) | ExportsIndexBits::encode(index);
   return handle(Smi::FromInt(config), isolate);
 }
 
@@ -94,6 +110,11 @@ Handle<Smi> LoadHandler::LoadElement(Isolate* isolate,
 
 Handle<Smi> StoreHandler::StoreNormal(Isolate* isolate) {
   int config = KindBits::encode(kStoreNormal);
+  return handle(Smi::FromInt(config), isolate);
+}
+
+Handle<Smi> StoreHandler::StoreProxy(Isolate* isolate) {
+  int config = KindBits::encode(kProxy);
   return handle(Smi::FromInt(config), isolate);
 }
 
@@ -158,6 +179,27 @@ Handle<Smi> StoreHandler::TransitionToConstant(Isolate* isolate,
       StoreHandler::KindBits::encode(StoreHandler::kTransitionToConstant) |
       StoreHandler::DescriptorBits::encode(descriptor);
   return handle(Smi::FromInt(config), isolate);
+}
+
+// static
+WeakCell* StoreHandler::GetTransitionCell(Object* handler) {
+  if (handler->IsTuple3()) {
+    STATIC_ASSERT(kTransitionCellOffset == Tuple3::kValue1Offset);
+    WeakCell* cell = WeakCell::cast(Tuple3::cast(handler)->value1());
+    DCHECK(!cell->cleared());
+    return cell;
+  }
+
+  DCHECK(handler->IsFixedArray());
+  WeakCell* cell =
+      WeakCell::cast(FixedArray::cast(handler)->get(kTransitionCellIndex));
+  DCHECK(!cell->cleared());
+  return cell;
+}
+
+// static
+bool StoreHandler::IsHandler(Object* maybe_handler) {
+  return maybe_handler->IsFixedArray() || maybe_handler->IsTuple3();
 }
 
 }  // namespace internal

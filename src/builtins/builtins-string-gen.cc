@@ -8,6 +8,7 @@
 #include "src/builtins/builtins-utils-gen.h"
 #include "src/builtins/builtins.h"
 #include "src/code-factory.h"
+#include "src/factory-inl.h"
 #include "src/objects.h"
 
 namespace v8 {
@@ -15,6 +16,8 @@ namespace internal {
 
 typedef CodeStubAssembler::RelationalComparisonMode RelationalComparisonMode;
 typedef compiler::Node Node;
+template <class A>
+using TNode = compiler::TNode<A>;
 
 Node* StringBuiltinsAssembler::DirectStringData(Node* string,
                                                 Node* string_instance_type) {
@@ -124,9 +127,9 @@ Node* StringBuiltinsAssembler::PointerToStringDataAtIndex(
 
 void StringBuiltinsAssembler::ConvertAndBoundsCheckStartArgument(
     Node* context, Variable* var_start, Node* start, Node* string_length) {
-  Node* const start_int =
+  TNode<Object> const start_int =
       ToInteger(context, start, CodeStubAssembler::kTruncateMinusZero);
-  Node* const zero = SmiConstant(Smi::kZero);
+  TNode<Smi> const zero = SmiConstant(0);
 
   Label done(this);
   Label if_issmi(this), if_isheapnumber(this, Label::kDeferred);
@@ -134,10 +137,11 @@ void StringBuiltinsAssembler::ConvertAndBoundsCheckStartArgument(
 
   BIND(&if_issmi);
   {
-    var_start->Bind(
-        Select(SmiLessThan(start_int, zero),
-               [&] { return SmiMax(SmiAdd(string_length, start_int), zero); },
-               [&] { return start_int; }, MachineRepresentation::kTagged));
+    TNode<Smi> const start_int_smi = CAST(start_int);
+    var_start->Bind(Select(
+        SmiLessThan(start_int_smi, zero),
+        [&] { return SmiMax(SmiAdd(string_length, start_int_smi), zero); },
+        [&] { return start_int_smi; }, MachineRepresentation::kTagged));
     Goto(&done);
   }
 
@@ -147,9 +151,10 @@ void StringBuiltinsAssembler::ConvertAndBoundsCheckStartArgument(
     // negative, {start} = max({string_length} + {start}),0) = 0'. If it is
     // positive, set {start} to {string_length} which ultimately results in
     // returning an empty string.
-    Node* const float_zero = Float64Constant(0.);
-    Node* const start_float = LoadHeapNumberValue(start_int);
-    var_start->Bind(SelectTaggedConstant(
+    TNode<HeapNumber> const start_int_hn = CAST(start_int);
+    TNode<Float64T> const float_zero = Float64Constant(0.);
+    TNode<Float64T> const start_float = LoadHeapNumberValue(start_int_hn);
+    var_start->Bind(SelectTaggedConstant<Smi>(
         Float64LessThan(start_float, float_zero), zero, string_length));
     Goto(&done);
   }
@@ -706,6 +711,36 @@ TF_BUILTIN(StringPrototypeCharCodeAt, CodeStubAssembler) {
   Return(result);
 }
 
+// ES6 #sec-string.prototype.codepointat
+TF_BUILTIN(StringPrototypeCodePointAt, StringBuiltinsAssembler) {
+  Node* context = Parameter(Descriptor::kContext);
+  Node* receiver = Parameter(Descriptor::kReceiver);
+  Node* position = Parameter(Descriptor::kPosition);
+
+  // Check that {receiver} is coercible to Object and convert it to a String.
+  receiver = ToThisString(context, receiver, "String.prototype.codePointAt");
+
+  // Convert the {position} to a Smi and check that it's in bounds of the
+  // {receiver}.
+  Label if_inbounds(this), if_outofbounds(this, Label::kDeferred);
+  position =
+      ToInteger(context, position, CodeStubAssembler::kTruncateMinusZero);
+  GotoIfNot(TaggedIsSmi(position), &if_outofbounds);
+  Node* receiver_length = LoadObjectField(receiver, String::kLengthOffset);
+  Branch(SmiBelow(position, receiver_length), &if_inbounds, &if_outofbounds);
+
+  BIND(&if_inbounds);
+  {
+    Node* value = LoadSurrogatePairAt(receiver, receiver_length, position,
+                                      UnicodeEncoding::UTF32);
+    Node* result = SmiFromWord32(value);
+    Return(result);
+  }
+
+  BIND(&if_outofbounds);
+  Return(UndefinedConstant());
+}
+
 // ES6 String.prototype.concat(...args)
 // ES6 #sec-string.prototype.concat
 TF_BUILTIN(StringPrototypeConcat, CodeStubAssembler) {
@@ -733,9 +768,8 @@ TF_BUILTIN(StringPrototypeConcat, CodeStubAssembler) {
 }
 
 void StringBuiltinsAssembler::StringIndexOf(
-    Node* const subject_string, Node* const subject_instance_type,
-    Node* const search_string, Node* const search_instance_type,
-    Node* const position, std::function<void(Node*)> f_return) {
+    Node* const subject_string, Node* const search_string, Node* const position,
+    std::function<void(Node*)> f_return) {
   CSA_ASSERT(this, IsString(subject_string));
   CSA_ASSERT(this, IsString(search_string));
   CSA_ASSERT(this, TaggedIsSmi(position));
@@ -758,6 +792,11 @@ void StringBuiltinsAssembler::StringIndexOf(
                                     IntPtrSub(subject_length, start_position)),
               &return_minus_1);
   }
+
+  // If the string pointers are identical, we can just return 0. Note that this
+  // implies {start_position} == 0 since we've passed the check above.
+  Label return_zero(this);
+  GotoIf(WordEqual(subject_string, search_string), &return_zero);
 
   // Try to unpack subject and search strings. Bail to runtime if either needs
   // to be flattened.
@@ -880,6 +919,9 @@ void StringBuiltinsAssembler::StringIndexOf(
   BIND(&return_minus_1);
   f_return(SmiConstant(-1));
 
+  BIND(&return_zero);
+  f_return(SmiConstant(0));
+
   BIND(&zero_length_needle);
   {
     Comment("0-length search_string");
@@ -891,8 +933,9 @@ void StringBuiltinsAssembler::StringIndexOf(
     // Simplified version of the runtime call where the types of the arguments
     // are already known due to type checks in this stub.
     Comment("Call Runtime Unchecked");
-    Node* result = CallRuntime(Runtime::kStringIndexOfUnchecked, SmiConstant(0),
-                               subject_string, search_string, position);
+    Node* result =
+        CallRuntime(Runtime::kStringIndexOfUnchecked, NoContextConstant(),
+                    subject_string, search_string, position);
     f_return(result);
   }
 }
@@ -904,84 +947,89 @@ TF_BUILTIN(StringIndexOf, StringBuiltinsAssembler) {
   Node* receiver = Parameter(Descriptor::kReceiver);
   Node* search_string = Parameter(Descriptor::kSearchString);
   Node* position = Parameter(Descriptor::kPosition);
-
-  Node* instance_type = LoadInstanceType(receiver);
-  Node* search_string_instance_type = LoadInstanceType(search_string);
-
-  StringIndexOf(receiver, instance_type, search_string,
-                search_string_instance_type, position,
+  StringIndexOf(receiver, search_string, position,
                 [this](Node* result) { this->Return(result); });
+}
+
+// ES6 String.prototype.includes(searchString [, position])
+// #sec-string.prototype.includes
+TF_BUILTIN(StringPrototypeIncludes, StringIncludesIndexOfAssembler) {
+  Generate(kIncludes);
 }
 
 // ES6 String.prototype.indexOf(searchString [, position])
 // #sec-string.prototype.indexof
-TF_BUILTIN(StringPrototypeIndexOf, StringBuiltinsAssembler) {
-  VARIABLE(search_string, MachineRepresentation::kTagged);
-  VARIABLE(position, MachineRepresentation::kTagged);
-  Label call_runtime(this), call_runtime_unchecked(this), argc_0(this),
-      no_argc_0(this), argc_1(this), no_argc_1(this), argc_2(this),
-      fast_path(this), return_minus_1(this);
+TF_BUILTIN(StringPrototypeIndexOf, StringIncludesIndexOfAssembler) {
+  Generate(kIndexOf);
+}
 
+void StringIncludesIndexOfAssembler::Generate(SearchVariant variant) {
   // TODO(ishell): use constants from Descriptor once the JSFunction linkage
   // arguments are reordered.
   Node* argc = Parameter(BuiltinDescriptor::kArgumentsCount);
-  Node* context = Parameter(BuiltinDescriptor::kContext);
-
+  Node* const context = Parameter(BuiltinDescriptor::kContext);
   CodeStubArguments arguments(this, ChangeInt32ToIntPtr(argc));
-  Node* receiver = arguments.GetReceiver();
+  Node* const receiver = arguments.GetReceiver();
   // From now on use word-size argc value.
   argc = arguments.GetLength();
 
-  GotoIf(IntPtrEqual(argc, IntPtrConstant(0)), &argc_0);
+  VARIABLE(var_search_string, MachineRepresentation::kTagged);
+  VARIABLE(var_position, MachineRepresentation::kTagged);
+  Label argc_1(this), argc_2(this), call_runtime(this, Label::kDeferred),
+      fast_path(this);
+
   GotoIf(IntPtrEqual(argc, IntPtrConstant(1)), &argc_1);
-  Goto(&argc_2);
-  BIND(&argc_0);
+  GotoIf(IntPtrGreaterThan(argc, IntPtrConstant(1)), &argc_2);
   {
     Comment("0 Argument case");
-    Node* undefined = UndefinedConstant();
-    search_string.Bind(undefined);
-    position.Bind(undefined);
+    CSA_ASSERT(this, IntPtrEqual(argc, IntPtrConstant(0)));
+    Node* const undefined = UndefinedConstant();
+    var_search_string.Bind(undefined);
+    var_position.Bind(undefined);
     Goto(&call_runtime);
   }
   BIND(&argc_1);
   {
     Comment("1 Argument case");
-    search_string.Bind(arguments.AtIndex(0));
-    position.Bind(SmiConstant(0));
+    var_search_string.Bind(arguments.AtIndex(0));
+    var_position.Bind(SmiConstant(0));
     Goto(&fast_path);
   }
   BIND(&argc_2);
   {
     Comment("2 Argument case");
-    search_string.Bind(arguments.AtIndex(0));
-    position.Bind(arguments.AtIndex(1));
-    GotoIfNot(TaggedIsSmi(position.value()), &call_runtime);
+    var_search_string.Bind(arguments.AtIndex(0));
+    var_position.Bind(arguments.AtIndex(1));
+    GotoIfNot(TaggedIsSmi(var_position.value()), &call_runtime);
     Goto(&fast_path);
   }
-
   BIND(&fast_path);
   {
     Comment("Fast Path");
+    Node* const search = var_search_string.value();
+    Node* const position = var_position.value();
     GotoIf(TaggedIsSmi(receiver), &call_runtime);
-    Node* needle = search_string.value();
-    GotoIf(TaggedIsSmi(needle), &call_runtime);
+    GotoIf(TaggedIsSmi(search), &call_runtime);
+    GotoIfNot(IsString(receiver), &call_runtime);
+    GotoIfNot(IsString(search), &call_runtime);
 
-    Node* instance_type = LoadInstanceType(receiver);
-    GotoIfNot(IsStringInstanceType(instance_type), &call_runtime);
-
-    Node* needle_instance_type = LoadInstanceType(needle);
-    GotoIfNot(IsStringInstanceType(needle_instance_type), &call_runtime);
-
-    StringIndexOf(
-        receiver, instance_type, needle, needle_instance_type, position.value(),
-        [&arguments](Node* result) { arguments.PopAndReturn(result); });
+    StringIndexOf(receiver, search, position, [&](Node* result) {
+      CSA_ASSERT(this, TaggedIsSmi(result));
+      arguments.PopAndReturn((variant == kIndexOf)
+                                 ? result
+                                 : SelectBooleanConstant(SmiGreaterThanOrEqual(
+                                       result, SmiConstant(0))));
+    });
   }
-
   BIND(&call_runtime);
   {
     Comment("Call Runtime");
-    Node* result = CallRuntime(Runtime::kStringIndexOf, context, receiver,
-                               search_string.value(), position.value());
+    Runtime::FunctionId runtime = variant == kIndexOf
+                                      ? Runtime::kStringIndexOf
+                                      : Runtime::kStringIncludes;
+    Node* const result =
+        CallRuntime(runtime, context, receiver, var_search_string.value(),
+                    var_position.value());
     arguments.PopAndReturn(result);
   }
 }
@@ -997,16 +1045,16 @@ void StringBuiltinsAssembler::RequireObjectCoercible(Node* const context,
   Branch(IsNullOrUndefined(value), &throw_exception, &out);
 
   BIND(&throw_exception);
-  TailCallRuntime(
-      Runtime::kThrowCalledOnNullOrUndefined, context,
-      HeapConstant(factory()->NewStringFromAsciiChecked(method_name, TENURED)));
+  TailCallRuntime(Runtime::kThrowCalledOnNullOrUndefined, context,
+                  StringConstant(method_name));
 
   BIND(&out);
 }
 
 void StringBuiltinsAssembler::MaybeCallFunctionAtSymbol(
     Node* const context, Node* const object, Handle<Symbol> symbol,
-    const NodeFunction0& regexp_call, const NodeFunction1& generic_call) {
+    const NodeFunction0& regexp_call, const NodeFunction1& generic_call,
+    CodeStubArguments* args) {
   Label out(this);
 
   // Smis definitely don't have an attached symbol.
@@ -1028,7 +1076,7 @@ void StringBuiltinsAssembler::MaybeCallFunctionAtSymbol(
         LoadContextElement(native_context, Context::STRING_FUNCTION_INDEX);
     Node* const initial_map =
         LoadObjectField(string_fun, JSFunction::kPrototypeOrInitialMapOffset);
-    Node* const proto_map = LoadMap(LoadMapPrototype(initial_map));
+    Node* const proto_map = LoadMap(CAST(LoadMapPrototype(initial_map)));
 
     Branch(WordEqual(proto_map, initial_proto_initial_map), &out, &next);
 
@@ -1044,7 +1092,12 @@ void StringBuiltinsAssembler::MaybeCallFunctionAtSymbol(
                                   &slow_lookup);
 
     BIND(&stub_call);
-    Return(regexp_call());
+    Node* const result = regexp_call();
+    if (args == nullptr) {
+      Return(result);
+    } else {
+      args->PopAndReturn(result);
+    }
 
     BIND(&slow_lookup);
   }
@@ -1065,7 +1118,11 @@ void StringBuiltinsAssembler::MaybeCallFunctionAtSymbol(
 
   // Attempt to call the function.
   Node* const result = generic_call(maybe_func);
-  Return(result);
+  if (args == nullptr) {
+    Return(result);
+  } else {
+    args->PopAndReturn(result);
+  }
 
   BIND(&out);
 }
@@ -1124,6 +1181,116 @@ compiler::Node* StringBuiltinsAssembler::GetSubstitution(
   return var_result.value();
 }
 
+// ES6 #sec-string.prototype.repeat
+TF_BUILTIN(StringPrototypeRepeat, StringBuiltinsAssembler) {
+  Label invalid_count(this), invalid_string_length(this),
+      return_emptystring(this);
+
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Node* const count = Parameter(Descriptor::kCount);
+  Node* const string =
+      ToThisString(context, receiver, "String.prototype.repeat");
+  Node* const is_stringempty =
+      SmiEqual(LoadStringLength(string), SmiConstant(0));
+
+  VARIABLE(var_count, MachineRepresentation::kTagged,
+           ToInteger(context, count, CodeStubAssembler::kTruncateMinusZero));
+
+  // Verifies a valid count and takes a fast path when the result will be an
+  // empty string.
+  {
+    Label next(this), if_count_isheapnumber(this, Label::kDeferred);
+
+    GotoIfNot(TaggedIsSmi(var_count.value()), &if_count_isheapnumber);
+
+    // If count is a SMI, throw a RangeError if less than 0 or greater than
+    // the maximum string length.
+    {
+      GotoIf(SmiLessThan(var_count.value(), SmiConstant(0)), &invalid_count);
+      GotoIf(SmiEqual(var_count.value(), SmiConstant(0)), &return_emptystring);
+      GotoIf(is_stringempty, &return_emptystring);
+      GotoIf(SmiGreaterThan(var_count.value(), SmiConstant(String::kMaxLength)),
+             &invalid_string_length);
+      Goto(&next);
+    }
+
+    // If count is a Heap Number...
+    // 1) If count is Infinity, throw a RangeError exception
+    // 2) If receiver is an empty string, return an empty string
+    // 3) Otherwise, throw RangeError exception
+    BIND(&if_count_isheapnumber);
+    {
+      CSA_ASSERT(this, IsNumberNormalized(var_count.value()));
+      Node* const number_value = LoadHeapNumberValue(var_count.value());
+      GotoIf(Float64Equal(number_value, Float64Constant(V8_INFINITY)),
+             &invalid_count);
+      GotoIf(Float64LessThan(number_value, Float64Constant(0.0)),
+             &invalid_count);
+      Branch(is_stringempty, &return_emptystring, &invalid_string_length);
+    }
+    BIND(&next);
+  }
+
+  // The receiver is repeated with the following algorithm:
+  //   let n = count;
+  //   let power_of_two_repeats = receiver;
+  //   let result = "";
+  //   while (true) {
+  //     if (n & 1) result += s;
+  //     n >>= 1;
+  //     if (n === 0) return result;
+  //     power_of_two_repeats += power_of_two_repeats;
+  //   }
+  {
+    VARIABLE(var_result, MachineRepresentation::kTagged, EmptyStringConstant());
+    VARIABLE(var_temp, MachineRepresentation::kTagged, string);
+
+    Callable stringadd_callable =
+        CodeFactory::StringAdd(isolate(), STRING_ADD_CHECK_NONE, NOT_TENURED);
+
+    Label loop(this, {&var_count, &var_result, &var_temp}), return_result(this);
+    Goto(&loop);
+    BIND(&loop);
+    {
+      {
+        Label next(this);
+        GotoIfNot(SmiToWord32(SmiAnd(var_count.value(), SmiConstant(1))),
+                  &next);
+        var_result.Bind(CallStub(stringadd_callable, context,
+                                 var_result.value(), var_temp.value()));
+        Goto(&next);
+        BIND(&next);
+      }
+
+      var_count.Bind(SmiShr(var_count.value(), 1));
+      GotoIf(SmiEqual(var_count.value(), SmiConstant(0)), &return_result);
+      var_temp.Bind(CallStub(stringadd_callable, context, var_temp.value(),
+                             var_temp.value()));
+      Goto(&loop);
+    }
+
+    BIND(&return_result);
+    Return(var_result.value());
+  }
+
+  BIND(&return_emptystring);
+  Return(EmptyStringConstant());
+
+  BIND(&invalid_count);
+  {
+    CallRuntime(Runtime::kThrowRangeError, context,
+                SmiConstant(MessageTemplate::kInvalidCountValue),
+                var_count.value());
+    Unreachable();
+  }
+  BIND(&invalid_string_length);
+  {
+    CallRuntime(Runtime::kThrowInvalidStringLength, context);
+    Unreachable();
+  }
+}
+
 // ES6 #sec-string.prototype.replace
 TF_BUILTIN(StringPrototypeReplace, StringBuiltinsAssembler) {
   Label out(this);
@@ -1144,9 +1311,8 @@ TF_BUILTIN(StringPrototypeReplace, StringBuiltinsAssembler) {
       [=]() {
         Node* const subject_string = ToString_Inline(context, receiver);
 
-        Callable replace_callable = CodeFactory::RegExpReplace(isolate());
-        return CallStub(replace_callable, context, search, subject_string,
-                        replace);
+        return CallBuiltin(Builtins::kRegExpReplace, context, search,
+                           subject_string, replace);
       },
       [=](Node* fn) {
         Callable call_callable = CodeFactory::Call(isolate());
@@ -1154,8 +1320,6 @@ TF_BUILTIN(StringPrototypeReplace, StringBuiltinsAssembler) {
       });
 
   // Convert {receiver} and {search} to strings.
-
-  Callable indexof_callable = CodeFactory::StringIndexOf(isolate());
 
   Node* const subject_string = ToString_Inline(context, receiver);
   Node* const search_string = ToString_Inline(context, search);
@@ -1193,8 +1357,9 @@ TF_BUILTIN(StringPrototypeReplace, StringBuiltinsAssembler) {
   // longer substrings - we can handle up to 8 chars (one-byte) / 4 chars
   // (2-byte).
 
-  Node* const match_start_index = CallStub(
-      indexof_callable, context, subject_string, search_string, smi_zero);
+  Node* const match_start_index =
+      CallBuiltin(Builtins::kStringIndexOf, context, subject_string,
+                  search_string, smi_zero);
   CSA_ASSERT(this, TaggedIsSmi(match_start_index));
 
   // Early exit if no match found.
@@ -1294,19 +1459,18 @@ TF_BUILTIN(StringPrototypeSlice, StringBuiltinsAssembler) {
       ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
   CodeStubArguments args(this, argc);
   Node* const receiver = args.GetReceiver();
-  Node* const start =
-      args.GetOptionalArgumentValue(kStart, UndefinedConstant());
-  Node* const end = args.GetOptionalArgumentValue(kEnd, UndefinedConstant());
+  Node* const start = args.GetOptionalArgumentValue(kStart);
+  Node* const end = args.GetOptionalArgumentValue(kEnd);
   Node* const context = Parameter(BuiltinDescriptor::kContext);
 
-  Node* const smi_zero = SmiConstant(0);
+  TNode<Smi> const smi_zero = SmiConstant(0);
 
   // 1. Let O be ? RequireObjectCoercible(this value).
   RequireObjectCoercible(context, receiver, "String.prototype.slice");
 
   // 2. Let S be ? ToString(O).
-  Callable tostring_callable = CodeFactory::ToString(isolate());
-  Node* const subject_string = CallStub(tostring_callable, context, receiver);
+  Node* const subject_string =
+      CallBuiltin(Builtins::kToString, context, receiver);
 
   // 3. Let len be the number of elements in S.
   Node* const length = LoadStringLength(subject_string);
@@ -1345,8 +1509,8 @@ TF_BUILTIN(StringPrototypeSlice, StringBuiltinsAssembler) {
     // returning an empty string.
     Node* const float_zero = Float64Constant(0.);
     Node* const end_float = LoadHeapNumberValue(end_int);
-    var_end.Bind(SelectTaggedConstant(Float64LessThan(end_float, float_zero),
-                                      smi_zero, length));
+    var_end.Bind(SelectTaggedConstant<Smi>(
+        Float64LessThan(end_float, float_zero), smi_zero, length));
     Goto(&out);
   }
 
@@ -1367,12 +1531,17 @@ TF_BUILTIN(StringPrototypeSlice, StringBuiltinsAssembler) {
 
 // ES6 section 21.1.3.19 String.prototype.split ( separator, limit )
 TF_BUILTIN(StringPrototypeSplit, StringBuiltinsAssembler) {
-  Label out(this);
+  const int kSeparatorArg = 0;
+  const int kLimitArg = 1;
 
-  Node* const receiver = Parameter(Descriptor::kReceiver);
-  Node* const separator = Parameter(Descriptor::kSeparator);
-  Node* const limit = Parameter(Descriptor::kLimit);
-  Node* const context = Parameter(Descriptor::kContext);
+  Node* const argc =
+      ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
+  CodeStubArguments args(this, argc);
+
+  Node* const receiver = args.GetReceiver();
+  Node* const separator = args.GetOptionalArgumentValue(kSeparatorArg);
+  Node* const limit = args.GetOptionalArgumentValue(kLimitArg);
+  Node* const context = Parameter(BuiltinDescriptor::kContext);
 
   Node* const smi_zero = SmiConstant(0);
 
@@ -1385,23 +1554,20 @@ TF_BUILTIN(StringPrototypeSplit, StringBuiltinsAssembler) {
       [=]() {
         Node* const subject_string = ToString_Inline(context, receiver);
 
-        Callable split_callable = CodeFactory::RegExpSplit(isolate());
-        return CallStub(split_callable, context, separator, subject_string,
-                        limit);
+        return CallBuiltin(Builtins::kRegExpSplit, context, separator,
+                           subject_string, limit);
       },
       [=](Node* fn) {
         Callable call_callable = CodeFactory::Call(isolate());
         return CallJS(call_callable, context, fn, separator, receiver, limit);
-      });
+      },
+      &args);
 
   // String and integer conversions.
-  // TODO(jgruber): The old implementation used Uint32Max instead of SmiMax -
-  // but AFAIK there should not be a difference since arrays are capped at Smi
-  // lengths.
 
   Node* const subject_string = ToString_Inline(context, receiver);
   Node* const limit_number =
-      Select(IsUndefined(limit), [=]() { return SmiConstant(Smi::kMaxValue); },
+      Select(IsUndefined(limit), [=]() { return NumberConstant(kMaxUInt32); },
              [=]() { return ToUint32(context, limit); },
              MachineRepresentation::kTagged);
   Node* const separator_string = ToString_Inline(context, separator);
@@ -1411,7 +1577,7 @@ TF_BUILTIN(StringPrototypeSplit, StringBuiltinsAssembler) {
     Label next(this);
     GotoIfNot(SmiEqual(limit_number, smi_zero), &next);
 
-    const ElementsKind kind = FAST_ELEMENTS;
+    const ElementsKind kind = PACKED_ELEMENTS;
     Node* const native_context = LoadNativeContext(context);
     Node* const array_map = LoadJSArrayElementsMap(kind, native_context);
 
@@ -1419,7 +1585,7 @@ TF_BUILTIN(StringPrototypeSplit, StringBuiltinsAssembler) {
     Node* const capacity = IntPtrConstant(0);
     Node* const result = AllocateJSArray(kind, array_map, capacity, length);
 
-    Return(result);
+    args.PopAndReturn(result);
 
     BIND(&next);
   }
@@ -1430,7 +1596,7 @@ TF_BUILTIN(StringPrototypeSplit, StringBuiltinsAssembler) {
     Label next(this);
     GotoIfNot(IsUndefined(separator), &next);
 
-    const ElementsKind kind = FAST_ELEMENTS;
+    const ElementsKind kind = PACKED_ELEMENTS;
     Node* const native_context = LoadNativeContext(context);
     Node* const array_map = LoadJSArrayElementsMap(kind, native_context);
 
@@ -1441,7 +1607,7 @@ TF_BUILTIN(StringPrototypeSplit, StringBuiltinsAssembler) {
     Node* const fixed_array = LoadElements(result);
     StoreFixedArrayElement(fixed_array, 0, subject_string);
 
-    Return(result);
+    args.PopAndReturn(result);
 
     BIND(&next);
   }
@@ -1453,7 +1619,7 @@ TF_BUILTIN(StringPrototypeSplit, StringBuiltinsAssembler) {
 
     Node* const result = CallRuntime(Runtime::kStringToArray, context,
                                      subject_string, limit_number);
-    Return(result);
+    args.PopAndReturn(result);
 
     BIND(&next);
   }
@@ -1461,22 +1627,29 @@ TF_BUILTIN(StringPrototypeSplit, StringBuiltinsAssembler) {
   Node* const result =
       CallRuntime(Runtime::kStringSplit, context, subject_string,
                   separator_string, limit_number);
-  Return(result);
+  args.PopAndReturn(result);
 }
 
 // ES6 #sec-string.prototype.substr
 TF_BUILTIN(StringPrototypeSubstr, StringBuiltinsAssembler) {
+  const int kStartArg = 0;
+  const int kLengthArg = 1;
+
+  Node* const argc =
+      ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
+  CodeStubArguments args(this, argc);
+
+  Node* const receiver = args.GetReceiver();
+  Node* const start = args.GetOptionalArgumentValue(kStartArg);
+  Node* const length = args.GetOptionalArgumentValue(kLengthArg);
+  Node* const context = Parameter(BuiltinDescriptor::kContext);
+
   Label out(this);
 
   VARIABLE(var_start, MachineRepresentation::kTagged);
   VARIABLE(var_length, MachineRepresentation::kTagged);
 
-  Node* const receiver = Parameter(Descriptor::kReceiver);
-  Node* const start = Parameter(Descriptor::kStart);
-  Node* const length = Parameter(Descriptor::kLength);
-  Node* const context = Parameter(Descriptor::kContext);
-
-  Node* const zero = SmiConstant(Smi::kZero);
+  Node* const zero = SmiConstant(0);
 
   // Check that {receiver} is coercible to Object and convert it to a String.
   Node* const string =
@@ -1516,7 +1689,7 @@ TF_BUILTIN(StringPrototypeSubstr, StringBuiltinsAssembler) {
     var_length.Bind(SmiMin(positive_length, minimal_length));
 
     GotoIfNot(SmiLessThanOrEqual(var_length.value(), zero), &out);
-    Return(EmptyStringConstant());
+    args.PopAndReturn(EmptyStringConstant());
   }
 
   BIND(&if_isheapnumber);
@@ -1525,7 +1698,7 @@ TF_BUILTIN(StringPrototypeSubstr, StringBuiltinsAssembler) {
     // two cases according to the spec: if it is negative, "" is returned; if
     // it is positive, then length is set to {string_length} - {start}.
 
-    CSA_ASSERT(this, IsHeapNumberMap(LoadMap(var_length.value())));
+    CSA_ASSERT(this, IsHeapNumber(var_length.value()));
 
     Label if_isnegative(this), if_ispositive(this);
     Node* const float_zero = Float64Constant(0.);
@@ -1534,13 +1707,13 @@ TF_BUILTIN(StringPrototypeSubstr, StringBuiltinsAssembler) {
            &if_ispositive);
 
     BIND(&if_isnegative);
-    Return(EmptyStringConstant());
+    args.PopAndReturn(EmptyStringConstant());
 
     BIND(&if_ispositive);
     {
       var_length.Bind(SmiSub(string_length, var_start.value()));
       GotoIfNot(SmiLessThanOrEqual(var_length.value(), zero), &out);
-      Return(EmptyStringConstant());
+      args.PopAndReturn(EmptyStringConstant());
     }
   }
 
@@ -1548,17 +1721,17 @@ TF_BUILTIN(StringPrototypeSubstr, StringBuiltinsAssembler) {
   {
     Node* const end = SmiAdd(var_start.value(), var_length.value());
     Node* const result = SubString(context, string, var_start.value(), end);
-    Return(result);
+    args.PopAndReturn(result);
   }
 }
 
-compiler::Node* StringBuiltinsAssembler::ToSmiBetweenZeroAnd(Node* context,
-                                                             Node* value,
-                                                             Node* limit) {
+TNode<Smi> StringBuiltinsAssembler::ToSmiBetweenZeroAnd(
+    SloppyTNode<Context> context, SloppyTNode<Object> value,
+    SloppyTNode<Smi> limit) {
   Label out(this);
-  VARIABLE(var_result, MachineRepresentation::kTagged);
+  TVARIABLE(Smi, var_result);
 
-  Node* const value_int =
+  TNode<Object> const value_int =
       this->ToInteger(context, value, CodeStubAssembler::kTruncateMinusZero);
 
   Label if_issmi(this), if_isnotsmi(this, Label::kDeferred);
@@ -1571,15 +1744,15 @@ compiler::Node* StringBuiltinsAssembler::ToSmiBetweenZeroAnd(Node* context,
 
     BIND(&if_isinbounds);
     {
-      var_result.Bind(value_int);
+      var_result = CAST(value_int);
       Goto(&out);
     }
 
     BIND(&if_isoutofbounds);
     {
-      Node* const zero = SmiConstant(Smi::kZero);
-      var_result.Bind(
-          SelectTaggedConstant(SmiLessThan(value_int, zero), zero, limit));
+      TNode<Smi> const zero = SmiConstant(0);
+      var_result =
+          SelectTaggedConstant(SmiLessThan(value_int, zero), zero, limit);
       Goto(&out);
     }
   }
@@ -1587,31 +1760,38 @@ compiler::Node* StringBuiltinsAssembler::ToSmiBetweenZeroAnd(Node* context,
   BIND(&if_isnotsmi);
   {
     // {value} is a heap number - in this case, it is definitely out of bounds.
-    CSA_ASSERT(this, IsHeapNumberMap(LoadMap(value_int)));
+    TNode<HeapNumber> value_int_hn = CAST(value_int);
 
-    Node* const float_zero = Float64Constant(0.);
-    Node* const smi_zero = SmiConstant(Smi::kZero);
-    Node* const value_float = LoadHeapNumberValue(value_int);
-    var_result.Bind(SelectTaggedConstant(
-        Float64LessThan(value_float, float_zero), smi_zero, limit));
+    TNode<Float64T> const float_zero = Float64Constant(0.);
+    TNode<Smi> const smi_zero = SmiConstant(0);
+    TNode<Float64T> const value_float = LoadHeapNumberValue(value_int_hn);
+    var_result = SelectTaggedConstant(Float64LessThan(value_float, float_zero),
+                                      smi_zero, limit);
     Goto(&out);
   }
 
   BIND(&out);
-  return var_result.value();
+  return var_result;
 }
 
 // ES6 #sec-string.prototype.substring
 TF_BUILTIN(StringPrototypeSubstring, StringBuiltinsAssembler) {
+  const int kStartArg = 0;
+  const int kEndArg = 1;
+
+  Node* const argc =
+      ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
+  CodeStubArguments args(this, argc);
+
+  Node* const receiver = args.GetReceiver();
+  Node* const start = args.GetOptionalArgumentValue(kStartArg);
+  Node* const end = args.GetOptionalArgumentValue(kEndArg);
+  Node* const context = Parameter(BuiltinDescriptor::kContext);
+
   Label out(this);
 
   VARIABLE(var_start, MachineRepresentation::kTagged);
   VARIABLE(var_end, MachineRepresentation::kTagged);
-
-  Node* const receiver = Parameter(Descriptor::kReceiver);
-  Node* const start = Parameter(Descriptor::kStart);
-  Node* const end = Parameter(Descriptor::kEnd);
-  Node* const context = Parameter(Descriptor::kContext);
 
   // Check that {receiver} is coercible to Object and convert it to a String.
   Node* const string =
@@ -1646,8 +1826,169 @@ TF_BUILTIN(StringPrototypeSubstring, StringBuiltinsAssembler) {
   {
     Node* result =
         SubString(context, string, var_start.value(), var_end.value());
-    Return(result);
+    args.PopAndReturn(result);
   }
+}
+
+// ES6 #sec-string.prototype.trim
+TF_BUILTIN(StringPrototypeTrim, StringTrimAssembler) {
+  Generate(String::kTrim, "String.prototype.trim");
+}
+
+// Non-standard WebKit extension
+TF_BUILTIN(StringPrototypeTrimLeft, StringTrimAssembler) {
+  Generate(String::kTrimLeft, "String.prototype.trimLeft");
+}
+
+// Non-standard WebKit extension
+TF_BUILTIN(StringPrototypeTrimRight, StringTrimAssembler) {
+  Generate(String::kTrimRight, "String.prototype.trimRight");
+}
+
+void StringTrimAssembler::Generate(String::TrimMode mode,
+                                   const char* method_name) {
+  Label return_emptystring(this), if_runtime(this);
+
+  Node* const argc = Parameter(BuiltinDescriptor::kArgumentsCount);
+  Node* const context = Parameter(BuiltinDescriptor::kContext);
+  CodeStubArguments arguments(this, ChangeInt32ToIntPtr(argc));
+  Node* const receiver = arguments.GetReceiver();
+
+  // Check that {receiver} is coercible to Object and convert it to a String.
+  Node* const string = ToThisString(context, receiver, method_name);
+  Node* const string_length = SmiUntag(LoadStringLength(string));
+
+  ToDirectStringAssembler to_direct(state(), string);
+  to_direct.TryToDirect(&if_runtime);
+  Node* const string_data = to_direct.PointerToData(&if_runtime);
+  Node* const instance_type = to_direct.instance_type();
+  Node* const is_stringonebyte = IsOneByteStringInstanceType(instance_type);
+  Node* const string_data_offset = to_direct.offset();
+
+  VARIABLE(var_start, MachineType::PointerRepresentation(), IntPtrConstant(0));
+  VARIABLE(var_end, MachineType::PointerRepresentation(),
+           IntPtrSub(string_length, IntPtrConstant(1)));
+
+  if (mode == String::kTrimLeft || mode == String::kTrim) {
+    ScanForNonWhiteSpaceOrLineTerminator(string_data, string_data_offset,
+                                         is_stringonebyte, &var_start,
+                                         string_length, 1, &return_emptystring);
+  }
+  if (mode == String::kTrimRight || mode == String::kTrim) {
+    ScanForNonWhiteSpaceOrLineTerminator(
+        string_data, string_data_offset, is_stringonebyte, &var_end,
+        IntPtrConstant(-1), -1, &return_emptystring);
+  }
+
+  arguments.PopAndReturn(
+      SubString(context, string, SmiTag(var_start.value()),
+                SmiAdd(SmiTag(var_end.value()), SmiConstant(1)),
+                SubStringFlags::FROM_TO_ARE_BOUNDED));
+
+  BIND(&if_runtime);
+  arguments.PopAndReturn(CallRuntime(Runtime::kStringTrim, context, string,
+                                     SmiConstant(static_cast<int>(mode))));
+
+  BIND(&return_emptystring);
+  arguments.PopAndReturn(EmptyStringConstant());
+}
+
+void StringTrimAssembler::ScanForNonWhiteSpaceOrLineTerminator(
+    Node* const string_data, Node* const string_data_offset,
+    Node* const is_stringonebyte, Variable* const var_index, Node* const end,
+    int increment, Label* const if_none_found) {
+  Label if_stringisonebyte(this), out(this);
+
+  GotoIf(is_stringonebyte, &if_stringisonebyte);
+
+  // Two Byte String
+  BuildLoop(
+      var_index, end, increment, if_none_found, &out, [&](Node* const index) {
+        return Load(
+            MachineType::Uint16(), string_data,
+            WordShl(IntPtrAdd(index, string_data_offset), IntPtrConstant(1)));
+      });
+
+  BIND(&if_stringisonebyte);
+  BuildLoop(var_index, end, increment, if_none_found, &out,
+            [&](Node* const index) {
+              return Load(MachineType::Uint8(), string_data,
+                          IntPtrAdd(index, string_data_offset));
+            });
+
+  BIND(&out);
+}
+
+void StringTrimAssembler::BuildLoop(Variable* const var_index, Node* const end,
+                                    int increment, Label* const if_none_found,
+                                    Label* const out,
+                                    std::function<Node*(Node*)> get_character) {
+  Label loop(this, var_index);
+  Goto(&loop);
+  BIND(&loop);
+  {
+    Node* const index = var_index->value();
+    GotoIf(IntPtrEqual(index, end), if_none_found);
+    GotoIfNotWhiteSpaceOrLineTerminator(
+        UncheckedCast<Uint32T>(get_character(index)), out);
+    Increment(var_index, increment);
+    Goto(&loop);
+  }
+}
+
+void StringTrimAssembler::GotoIfNotWhiteSpaceOrLineTerminator(
+    Node* const char_code, Label* const if_not_whitespace) {
+  Label out(this);
+
+  // 0x0020 - SPACE (Intentionally out of order to fast path a commmon case)
+  GotoIf(Word32Equal(char_code, Int32Constant(0x0020)), &out);
+
+  // 0x0009 - HORIZONTAL TAB
+  GotoIf(Uint32LessThan(char_code, Int32Constant(0x0009)), if_not_whitespace);
+  // 0x000A - LINE FEED OR NEW LINE
+  // 0x000B - VERTICAL TAB
+  // 0x000C - FORMFEED
+  // 0x000D - HORIZONTAL TAB
+  GotoIf(Uint32LessThanOrEqual(char_code, Int32Constant(0x000D)), &out);
+
+  // Common Non-whitespace characters
+  GotoIf(Uint32LessThan(char_code, Int32Constant(0x00A0)), if_not_whitespace);
+
+  // 0x00A0 - NO-BREAK SPACE
+  GotoIf(Word32Equal(char_code, Int32Constant(0x00A0)), &out);
+
+  // 0x1680 - Ogham Space Mark
+  GotoIf(Word32Equal(char_code, Int32Constant(0x1680)), &out);
+
+  // 0x2000 - EN QUAD
+  GotoIf(Uint32LessThan(char_code, Int32Constant(0x2000)), if_not_whitespace);
+  // 0x2001 - EM QUAD
+  // 0x2002 - EN SPACE
+  // 0x2003 - EM SPACE
+  // 0x2004 - THREE-PER-EM SPACE
+  // 0x2005 - FOUR-PER-EM SPACE
+  // 0x2006 - SIX-PER-EM SPACE
+  // 0x2007 - FIGURE SPACE
+  // 0x2008 - PUNCTUATION SPACE
+  // 0x2009 - THIN SPACE
+  // 0x200A - HAIR SPACE
+  GotoIf(Uint32LessThanOrEqual(char_code, Int32Constant(0x200A)), &out);
+
+  // 0x2028 - LINE SEPARATOR
+  GotoIf(Word32Equal(char_code, Int32Constant(0x2028)), &out);
+  // 0x2029 - PARAGRAPH SEPARATOR
+  GotoIf(Word32Equal(char_code, Int32Constant(0x2029)), &out);
+  // 0x202F - NARROW NO-BREAK SPACE
+  GotoIf(Word32Equal(char_code, Int32Constant(0x202F)), &out);
+  // 0x205F - MEDIUM MATHEMATICAL SPACE
+  GotoIf(Word32Equal(char_code, Int32Constant(0x205F)), &out);
+  // 0xFEFF - BYTE ORDER MARK
+  GotoIf(Word32Equal(char_code, Int32Constant(0xFEFF)), &out);
+  // 0x3000 - IDEOGRAPHIC SPACE
+  Branch(Word32Equal(char_code, Int32Constant(0x3000)), &out,
+         if_not_whitespace);
+
+  BIND(&out);
 }
 
 // ES6 #sec-string.prototype.tostring
@@ -1682,13 +2023,13 @@ TF_BUILTIN(StringPrototypeIterator, CodeStubAssembler) {
       LoadContextElement(native_context, Context::STRING_ITERATOR_MAP_INDEX);
   Node* iterator = Allocate(JSStringIterator::kSize);
   StoreMapNoWriteBarrier(iterator, map);
-  StoreObjectFieldRoot(iterator, JSValue::kPropertiesOffset,
+  StoreObjectFieldRoot(iterator, JSValue::kPropertiesOrHashOffset,
                        Heap::kEmptyFixedArrayRootIndex);
   StoreObjectFieldRoot(iterator, JSObject::kElementsOffset,
                        Heap::kEmptyFixedArrayRootIndex);
   StoreObjectFieldNoWriteBarrier(iterator, JSStringIterator::kStringOffset,
                                  string);
-  Node* index = SmiConstant(Smi::kZero);
+  Node* index = SmiConstant(0);
   StoreObjectFieldNoWriteBarrier(iterator, JSStringIterator::kNextIndexOffset,
                                  index);
   Return(iterator);
@@ -1696,30 +2037,30 @@ TF_BUILTIN(StringPrototypeIterator, CodeStubAssembler) {
 
 // Return the |word32| codepoint at {index}. Supports SeqStrings and
 // ExternalStrings.
-compiler::Node* StringBuiltinsAssembler::LoadSurrogatePairAt(
-    compiler::Node* string, compiler::Node* length, compiler::Node* index,
+TNode<Uint32T> StringBuiltinsAssembler::LoadSurrogatePairAt(
+    SloppyTNode<String> string, SloppyTNode<Smi> length, SloppyTNode<Smi> index,
     UnicodeEncoding encoding) {
   Label handle_surrogate_pair(this), return_result(this);
-  VARIABLE(var_result, MachineRepresentation::kWord32);
-  VARIABLE(var_trail, MachineRepresentation::kWord32);
-  var_result.Bind(StringCharCodeAt(string, index));
-  var_trail.Bind(Int32Constant(0));
+  TVARIABLE(Uint32T, var_result);
+  TVARIABLE(Uint32T, var_trail);
+  var_result = StringCharCodeAt(string, index);
+  var_trail = Unsigned(Int32Constant(0));
 
-  GotoIf(Word32NotEqual(Word32And(var_result.value(), Int32Constant(0xFC00)),
+  GotoIf(Word32NotEqual(Word32And(var_result, Int32Constant(0xFC00)),
                         Int32Constant(0xD800)),
          &return_result);
-  Node* next_index = SmiAdd(index, SmiConstant(Smi::FromInt(1)));
+  TNode<Smi> next_index = SmiAdd(index, SmiConstant(1));
 
   GotoIfNot(SmiLessThan(next_index, length), &return_result);
-  var_trail.Bind(StringCharCodeAt(string, next_index));
-  Branch(Word32Equal(Word32And(var_trail.value(), Int32Constant(0xFC00)),
+  var_trail = StringCharCodeAt(string, next_index);
+  Branch(Word32Equal(Word32And(var_trail, Int32Constant(0xFC00)),
                      Int32Constant(0xDC00)),
          &handle_surrogate_pair, &return_result);
 
   BIND(&handle_surrogate_pair);
   {
-    Node* lead = var_result.value();
-    Node* trail = var_trail.value();
+    TNode<Uint32T> lead = var_result;
+    TNode<Uint32T> trail = var_trail;
 
     // Check that this path is only taken if a surrogate pair is found
     CSA_SLOW_ASSERT(this,
@@ -1731,7 +2072,7 @@ compiler::Node* StringBuiltinsAssembler::LoadSurrogatePairAt(
 
     switch (encoding) {
       case UnicodeEncoding::UTF16:
-        var_result.Bind(Word32Or(
+        var_result = Unsigned(Word32Or(
 // Need to swap the order for big-endian platforms
 #if V8_TARGET_BIG_ENDIAN
             Word32Shl(lead, Int32Constant(16)), trail));
@@ -1743,12 +2084,12 @@ compiler::Node* StringBuiltinsAssembler::LoadSurrogatePairAt(
       case UnicodeEncoding::UTF32: {
         // Convert UTF16 surrogate pair into |word32| code point, encoded as
         // UTF32.
-        Node* surrogate_offset =
+        TNode<Int32T> surrogate_offset =
             Int32Constant(0x10000 - (0xD800 << 10) - 0xDC00);
 
         // (lead << 10) + trail + SURROGATE_OFFSET
-        var_result.Bind(Int32Add(WordShl(lead, Int32Constant(10)),
-                                 Int32Add(trail, surrogate_offset)));
+        var_result = Unsigned(Int32Add(Word32Shl(lead, Int32Constant(10)),
+                                       Int32Add(trail, surrogate_offset)));
         break;
       }
     }
@@ -1756,7 +2097,7 @@ compiler::Node* StringBuiltinsAssembler::LoadSurrogatePairAt(
   }
 
   BIND(&return_result);
-  return var_result.value();
+  return var_result;
 }
 
 // ES6 #sec-%stringiteratorprototype%.next
@@ -1799,19 +2140,8 @@ TF_BUILTIN(StringIteratorPrototypeNext, StringBuiltinsAssembler) {
 
   BIND(&return_result);
   {
-    Node* native_context = LoadNativeContext(context);
-    Node* map =
-        LoadContextElement(native_context, Context::ITERATOR_RESULT_MAP_INDEX);
-    Node* result = Allocate(JSIteratorResult::kSize);
-    StoreMapNoWriteBarrier(result, map);
-    StoreObjectFieldRoot(result, JSIteratorResult::kPropertiesOffset,
-                         Heap::kEmptyFixedArrayRootIndex);
-    StoreObjectFieldRoot(result, JSIteratorResult::kElementsOffset,
-                         Heap::kEmptyFixedArrayRootIndex);
-    StoreObjectFieldNoWriteBarrier(result, JSIteratorResult::kValueOffset,
-                                   var_value.value());
-    StoreObjectFieldNoWriteBarrier(result, JSIteratorResult::kDoneOffset,
-                                   var_done.value());
+    Node* result =
+        AllocateJSIteratorResult(context, var_value.value(), var_done.value());
     Return(result);
   }
 
@@ -1819,11 +2149,170 @@ TF_BUILTIN(StringIteratorPrototypeNext, StringBuiltinsAssembler) {
   {
     // The {receiver} is not a valid JSGeneratorObject.
     CallRuntime(Runtime::kThrowIncompatibleMethodReceiver, context,
-                HeapConstant(factory()->NewStringFromAsciiChecked(
-                    "String Iterator.prototype.next", TENURED)),
-                iterator);
+                StringConstant("String Iterator.prototype.next"), iterator);
     Unreachable();
   }
+}
+
+// -----------------------------------------------------------------------------
+// ES6 section B.2.3 Additional Properties of the String.prototype object
+
+class StringHtmlAssembler : public StringBuiltinsAssembler {
+ public:
+  explicit StringHtmlAssembler(compiler::CodeAssemblerState* state)
+      : StringBuiltinsAssembler(state) {}
+
+ protected:
+  void Generate(Node* const context, Node* const receiver,
+                const char* method_name, const char* tag_name) {
+    Node* const string = ToThisString(context, receiver, method_name);
+    std::string open_tag = "<" + std::string(tag_name) + ">";
+    std::string close_tag = "</" + std::string(tag_name) + ">";
+
+    Node* strings[] = {StringConstant(open_tag.c_str()), string,
+                       StringConstant(close_tag.c_str())};
+    Return(ConcatStrings(context, strings, arraysize(strings)));
+  }
+
+  void GenerateWithAttribute(Node* const context, Node* const receiver,
+                             const char* method_name, const char* tag_name,
+                             const char* attr, Node* const value) {
+    Node* const string = ToThisString(context, receiver, method_name);
+    Node* const value_string =
+        EscapeQuotes(context, ToString_Inline(context, value));
+    std::string open_tag_attr =
+        "<" + std::string(tag_name) + " " + std::string(attr) + "=\"";
+    std::string close_tag = "</" + std::string(tag_name) + ">";
+
+    Node* strings[] = {StringConstant(open_tag_attr.c_str()), value_string,
+                       StringConstant("\">"), string,
+                       StringConstant(close_tag.c_str())};
+    Return(ConcatStrings(context, strings, arraysize(strings)));
+  }
+
+  Node* ConcatStrings(Node* const context, Node** strings, int len) {
+    VARIABLE(var_result, MachineRepresentation::kTagged, strings[0]);
+    for (int i = 1; i < len; i++) {
+      var_result.Bind(CallStub(CodeFactory::StringAdd(isolate()), context,
+                               var_result.value(), strings[i]));
+    }
+    return var_result.value();
+  }
+
+  Node* EscapeQuotes(Node* const context, Node* const string) {
+    CSA_ASSERT(this, IsString(string));
+    Node* const regexp_function = LoadContextElement(
+        LoadNativeContext(context), Context::REGEXP_FUNCTION_INDEX);
+    Node* const initial_map = LoadObjectField(
+        regexp_function, JSFunction::kPrototypeOrInitialMapOffset);
+    // TODO(pwong): Refactor to not allocate RegExp
+    Node* const regexp =
+        CallRuntime(Runtime::kRegExpInitializeAndCompile, context,
+                    AllocateJSObjectFromMap(initial_map), StringConstant("\""),
+                    StringConstant("g"));
+
+    return CallRuntime(Runtime::kRegExpInternalReplace, context, regexp, string,
+                       StringConstant("&quot;"));
+  }
+};
+
+// ES6 #sec-string.prototype.anchor
+TF_BUILTIN(StringPrototypeAnchor, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Node* const value = Parameter(Descriptor::kValue);
+  GenerateWithAttribute(context, receiver, "String.prototype.anchor", "a",
+                        "name", value);
+}
+
+// ES6 #sec-string.prototype.big
+TF_BUILTIN(StringPrototypeBig, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.big", "big");
+}
+
+// ES6 #sec-string.prototype.blink
+TF_BUILTIN(StringPrototypeBlink, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.blink", "blink");
+}
+
+// ES6 #sec-string.prototype.bold
+TF_BUILTIN(StringPrototypeBold, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.bold", "b");
+}
+
+// ES6 #sec-string.prototype.fontcolor
+TF_BUILTIN(StringPrototypeFontcolor, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Node* const value = Parameter(Descriptor::kValue);
+  GenerateWithAttribute(context, receiver, "String.prototype.fontcolor", "font",
+                        "color", value);
+}
+
+// ES6 #sec-string.prototype.fontsize
+TF_BUILTIN(StringPrototypeFontsize, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Node* const value = Parameter(Descriptor::kValue);
+  GenerateWithAttribute(context, receiver, "String.prototype.fontsize", "font",
+                        "size", value);
+}
+
+// ES6 #sec-string.prototype.fixed
+TF_BUILTIN(StringPrototypeFixed, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.fixed", "tt");
+}
+
+// ES6 #sec-string.prototype.italics
+TF_BUILTIN(StringPrototypeItalics, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.italics", "i");
+}
+
+// ES6 #sec-string.prototype.link
+TF_BUILTIN(StringPrototypeLink, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Node* const value = Parameter(Descriptor::kValue);
+  GenerateWithAttribute(context, receiver, "String.prototype.link", "a", "href",
+                        value);
+}
+
+// ES6 #sec-string.prototype.small
+TF_BUILTIN(StringPrototypeSmall, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.small", "small");
+}
+
+// ES6 #sec-string.prototype.strike
+TF_BUILTIN(StringPrototypeStrike, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.strike", "strike");
+}
+
+// ES6 #sec-string.prototype.sub
+TF_BUILTIN(StringPrototypeSub, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.sub", "sub");
+}
+
+// ES6 #sec-string.prototype.sup
+TF_BUILTIN(StringPrototypeSup, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.sup", "sup");
 }
 
 }  // namespace internal

@@ -7,11 +7,14 @@
 
 #include "src/assembler.h"
 #include "src/identity-map.h"
+#include "src/wasm/decoder.h"
 #include "src/wasm/wasm-objects.h"
 
 namespace v8 {
 namespace internal {
 namespace wasm {
+
+int ExtractDirectCallIndex(wasm::Decoder& decoder, const byte* pc);
 
 // Helper class to specialize wasm code for a specific instance, or to update
 // code when memory / globals / tables change.
@@ -25,9 +28,8 @@ class CodeSpecialization {
   CodeSpecialization(Isolate*, Zone*);
   ~CodeSpecialization();
 
-  // Update memory references.
-  void RelocateMemoryReferences(Address old_start, uint32_t old_size,
-                                Address new_start, uint32_t new_size);
+  // Update WasmContext references.
+  void RelocateWasmContextReferences(Address new_context);
   // Update references to global variables.
   void RelocateGlobals(Address old_start, Address new_start);
   // Update function table size.
@@ -36,7 +38,7 @@ class CodeSpecialization {
   // Update all direct call sites based on the code table in the given instance.
   void RelocateDirectCalls(Handle<WasmInstanceObject> instance);
   // Relocate an arbitrary object (e.g. function table).
-  void RelocateObject(Handle<Object> old_obj, Handle<Object> new_obj);
+  void RelocatePointer(Address old_obj, Address new_obj);
 
   // Apply all relocations and patching to all code in the instance (wasm code
   // and exported functions).
@@ -46,10 +48,7 @@ class CodeSpecialization {
   bool ApplyToWasmCode(Code*, ICacheFlushMode = FLUSH_ICACHE_IF_NEEDED);
 
  private:
-  Address old_mem_start = 0;
-  uint32_t old_mem_size = 0;
-  Address new_mem_start = 0;
-  uint32_t new_mem_size = 0;
+  Address new_wasm_context_address = 0;
 
   Address old_globals_start = 0;
   Address new_globals_start = 0;
@@ -59,8 +58,7 @@ class CodeSpecialization {
 
   Handle<WasmInstanceObject> relocate_direct_calls_instance;
 
-  bool has_objects_to_relocate = false;
-  IdentityMap<Handle<Object>, ZoneAllocationPolicy> objects_to_relocate;
+  std::map<Address, Address> pointers_to_relocate;
 };
 
 }  // namespace wasm

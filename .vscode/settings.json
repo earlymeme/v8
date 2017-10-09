@@ -26,6 +26,7 @@
         "array": "cpp",
         "initializer_list": "cpp",
         "__bit_reference": "cpp",
-        "valarray": "cpp"
+        "valarray": "cpp",
+        "rope": "cpp"
     }
 }

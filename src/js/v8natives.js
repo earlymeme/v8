@@ -4,6 +4,8 @@
 
 (function(global, utils) {
 
+"use strict";
+
 %CheckIsBootstrapping();
 
 // ----------------------------------------------------------------------------
@@ -15,20 +17,15 @@ var iteratorSymbol = utils.ImportNow("iterator_symbol");
 // ----------------------------------------------------------------------------
 // Object
 
-// ES6 19.1.3.5 Object.prototype.toLocaleString([reserved1 [,reserved2]])
-function ObjectToLocaleString() {
-  CHECK_OBJECT_COERCIBLE(this, "Object.prototype.toLocaleString");
-  return this.toString();
-}
-
-
-// ES6 19.1.3.3 Object.prototype.isPrototypeOf(V)
-function ObjectIsPrototypeOf(V) {
-  if (!IS_RECEIVER(V)) return false;
-  var O = TO_OBJECT(this);
-  return %HasInPrototypeChain(V, O);
-}
-
+// Set up non-enumerable functions on the Object.prototype object.
+DEFINE_METHOD(
+  GlobalObject.prototype,
+  // ES6 19.1.3.5 Object.prototype.toLocaleString([reserved1 [,reserved2]])
+  toLocaleString() {
+    CHECK_OBJECT_COERCIBLE(this, "Object.prototype.toLocaleString");
+    return this.toString();
+  }
+);
 
 // ES6 7.3.9
 function GetMethod(obj, p) {
@@ -37,39 +34,6 @@ function GetMethod(obj, p) {
   if (IS_CALLABLE(func)) return func;
   throw %make_type_error(kCalledNonCallable, typeof func);
 }
-
-// ES6 19.1.1.1
-function ObjectConstructor(x) {
-  if (GlobalObject != new.target && !IS_UNDEFINED(new.target)) {
-    return this;
-  }
-  if (IS_NULL(x) || IS_UNDEFINED(x)) return {};
-  return TO_OBJECT(x);
-}
-
-
-// ----------------------------------------------------------------------------
-// Object
-
-%SetNativeFlag(GlobalObject);
-%SetCode(GlobalObject, ObjectConstructor);
-
-%AddNamedProperty(GlobalObject.prototype, "constructor", GlobalObject,
-                  DONT_ENUM);
-
-// Set up non-enumerable functions on the Object.prototype object.
-utils.InstallFunctions(GlobalObject.prototype, DONT_ENUM, [
-  // toString is added in bootstrapper.cc
-  "toLocaleString", ObjectToLocaleString,
-  // valueOf is added in bootstrapper.cc.
-  "isPrototypeOf", ObjectIsPrototypeOf,
-  // propertyIsEnumerable is added in bootstrapper.cc.
-  // __defineGetter__ is added in bootstrapper.cc.
-  // __lookupGetter__ is added in bootstrapper.cc.
-  // __defineSetter__ is added in bootstrapper.cc.
-  // __lookupSetter__ is added in bootstrapper.cc.
-]);
-
 
 // ----------------------------------------------------------------------------
 // Iterator related spec functions.

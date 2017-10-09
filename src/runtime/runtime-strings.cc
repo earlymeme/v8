@@ -9,6 +9,7 @@
 #include "src/counters.h"
 #include "src/objects-inl.h"
 #include "src/regexp/jsregexp-inl.h"
+#include "src/regexp/regexp-utils.h"
 #include "src/string-builder.h"
 #include "src/string-search.h"
 
@@ -44,8 +45,6 @@ RUNTIME_FUNCTION(Runtime_GetSubstitution) {
     MaybeHandle<String> GetNamedCapture(Handle<String> name,
                                         CaptureState* state) override {
       UNREACHABLE();
-      *state = INVALID;
-      return MaybeHandle<String>();
     }
 
    private:
@@ -108,7 +107,6 @@ MaybeHandle<String> StringReplaceOneCharWithString(
   }
 }
 
-
 RUNTIME_FUNCTION(Runtime_StringReplaceOneCharWithString) {
   HandleScope scope(isolate);
   DCHECK_EQ(3, args.length());
@@ -135,6 +133,58 @@ RUNTIME_FUNCTION(Runtime_StringReplaceOneCharWithString) {
   if (isolate->has_pending_exception()) return isolate->heap()->exception();
   // In case of empty handle and no pending exception we have stack overflow.
   return isolate->StackOverflow();
+}
+
+RUNTIME_FUNCTION(Runtime_StringTrim) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(2, args.length());
+  Handle<String> string = args.at<String>(0);
+  CONVERT_SMI_ARG_CHECKED(mode, 1);
+  String::TrimMode trim_mode = static_cast<String::TrimMode>(mode);
+  return *String::Trim(string, trim_mode);
+}
+
+// ES6 #sec-string.prototype.includes
+// String.prototype.includes(searchString [, position])
+RUNTIME_FUNCTION(Runtime_StringIncludes) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(3, args.length());
+
+  Handle<Object> receiver = args.at(0);
+  if (receiver->IsNullOrUndefined(isolate)) {
+    THROW_NEW_ERROR_RETURN_FAILURE(
+        isolate, NewTypeError(MessageTemplate::kCalledOnNullOrUndefined,
+                              isolate->factory()->NewStringFromAsciiChecked(
+                                  "String.prototype.includes")));
+  }
+  Handle<String> receiver_string;
+  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, receiver_string,
+                                     Object::ToString(isolate, receiver));
+
+  // Check if the search string is a regExp and fail if it is.
+  Handle<Object> search = args.at(1);
+  Maybe<bool> is_reg_exp = RegExpUtils::IsRegExp(isolate, search);
+  if (is_reg_exp.IsNothing()) {
+    DCHECK(isolate->has_pending_exception());
+    return isolate->heap()->exception();
+  }
+  if (is_reg_exp.FromJust()) {
+    THROW_NEW_ERROR_RETURN_FAILURE(
+        isolate, NewTypeError(MessageTemplate::kFirstArgumentNotRegExp,
+                              isolate->factory()->NewStringFromStaticChars(
+                                  "String.prototype.includes")));
+  }
+  Handle<String> search_string;
+  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, search_string,
+                                     Object::ToString(isolate, args.at(1)));
+  Handle<Object> position;
+  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, position,
+                                     Object::ToInteger(isolate, args.at(2)));
+
+  uint32_t index = receiver_string->ToValidIndex(*position);
+  int index_in_str =
+      String::IndexOf(isolate, receiver_string, search_string, index);
+  return *isolate->factory()->ToBoolean(index_in_str != -1);
 }
 
 // ES6 #sec-string.prototype.indexof
@@ -197,7 +247,6 @@ RUNTIME_FUNCTION(Runtime_SubString) {
   return *isolate->factory()->NewSubString(string, start, end);
 }
 
-
 RUNTIME_FUNCTION(Runtime_StringAdd) {
   HandleScope scope(isolate);
   DCHECK_EQ(2, args.length());
@@ -216,8 +265,7 @@ RUNTIME_FUNCTION(Runtime_InternalizeString) {
   return *isolate->factory()->InternalizeString(string);
 }
 
-
-RUNTIME_FUNCTION(Runtime_StringCharCodeAtRT) {
+RUNTIME_FUNCTION(Runtime_StringCharCodeAt) {
   HandleScope handle_scope(isolate);
   DCHECK_EQ(2, args.length());
 
@@ -235,7 +283,6 @@ RUNTIME_FUNCTION(Runtime_StringCharCodeAtRT) {
 
   return Smi::FromInt(subject->Get(i));
 }
-
 
 RUNTIME_FUNCTION(Runtime_StringCompare) {
   HandleScope handle_scope(isolate);
@@ -255,7 +302,6 @@ RUNTIME_FUNCTION(Runtime_StringCompare) {
   }
   UNREACHABLE();
 }
-
 
 RUNTIME_FUNCTION(Runtime_StringBuilderConcat) {
   HandleScope scope(isolate);
@@ -279,7 +325,7 @@ RUNTIME_FUNCTION(Runtime_StringBuilderConcat) {
   JSObject::EnsureCanContainHeapObjectElements(array);
 
   int special_length = special->length();
-  if (!array->HasFastObjectElements()) {
+  if (!array->HasObjectElements()) {
     return isolate->Throw(isolate->heap()->illegal_argument_string());
   }
 
@@ -329,7 +375,6 @@ RUNTIME_FUNCTION(Runtime_StringBuilderConcat) {
   }
 }
 
-
 RUNTIME_FUNCTION(Runtime_StringBuilderJoin) {
   HandleScope scope(isolate);
   DCHECK_EQ(3, args.length());
@@ -339,7 +384,7 @@ RUNTIME_FUNCTION(Runtime_StringBuilderJoin) {
     THROW_NEW_ERROR_RETURN_FAILURE(isolate, NewInvalidStringLengthError());
   }
   CONVERT_ARG_HANDLE_CHECKED(String, separator, 2);
-  CHECK(array->HasFastObjectElements());
+  CHECK(array->HasObjectElements());
   CHECK(array_length >= 0);
 
   Handle<FixedArray> fixed_array(FixedArray::cast(array->elements()));
@@ -470,7 +515,6 @@ static void JoinSparseArrayWithSeparator(FixedArray* elements,
   DCHECK(cursor <= buffer.length());
 }
 
-
 RUNTIME_FUNCTION(Runtime_SparseJoinWithSeparator) {
   HandleScope scope(isolate);
   DCHECK_EQ(3, args.length());
@@ -479,7 +523,7 @@ RUNTIME_FUNCTION(Runtime_SparseJoinWithSeparator) {
   CONVERT_ARG_HANDLE_CHECKED(String, separator, 2);
   // elements_array is fast-mode JSarray of alternating positions
   // (increasing order) and strings.
-  CHECK(elements_array->HasFastSmiOrObjectElements());
+  CHECK(elements_array->HasSmiOrObjectElements());
   // array_length is length of original array (used to add separators);
   // separator is string to put between elements. Assumed to be non-empty.
   CHECK(array_length > 0);
@@ -555,7 +599,6 @@ RUNTIME_FUNCTION(Runtime_SparseJoinWithSeparator) {
   }
 }
 
-
 // Copies Latin1 characters to the given fixed array looking up
 // one-char strings in the cache. Gives up on the first char that is
 // not in the cache and fills the remainder with smi zeros. Returns
@@ -585,7 +628,6 @@ static int CopyCachedOneByteCharsToArray(Heap* heap, const uint8_t* chars,
 #endif
   return i;
 }
-
 
 // Converts a String to JSArray.
 // For example, "foo" => ["f", "o", "o"].
@@ -633,7 +675,6 @@ RUNTIME_FUNCTION(Runtime_StringToArray) {
 
   return *isolate->factory()->NewJSArrayWithElements(elements);
 }
-
 
 RUNTIME_FUNCTION(Runtime_StringLessThan) {
   HandleScope handle_scope(isolate);
@@ -726,7 +767,6 @@ RUNTIME_FUNCTION(Runtime_FlattenString) {
   return *String::Flatten(str);
 }
 
-
 RUNTIME_FUNCTION(Runtime_StringCharFromCode) {
   HandleScope handlescope(isolate);
   DCHECK_EQ(1, args.length());
@@ -738,21 +778,9 @@ RUNTIME_FUNCTION(Runtime_StringCharFromCode) {
   return isolate->heap()->empty_string();
 }
 
-RUNTIME_FUNCTION(Runtime_ExternalStringGetChar) {
+RUNTIME_FUNCTION(Runtime_StringMaxLength) {
   SealHandleScope shs(isolate);
-  DCHECK_EQ(2, args.length());
-  CONVERT_ARG_CHECKED(ExternalString, string, 0);
-  CONVERT_INT32_ARG_CHECKED(index, 1);
-  return Smi::FromInt(string->Get(index));
-}
-
-RUNTIME_FUNCTION(Runtime_StringCharCodeAt) {
-  SealHandleScope shs(isolate);
-  DCHECK_EQ(2, args.length());
-  if (!args[0]->IsString()) return isolate->heap()->undefined_value();
-  if (!args[1]->IsNumber()) return isolate->heap()->undefined_value();
-  if (std::isinf(args.number_at(1))) return isolate->heap()->nan_value();
-  return __RT_impl_Runtime_StringCharCodeAtRT(args, isolate);
+  return Smi::FromInt(String::kMaxLength);
 }
 
 }  // namespace internal

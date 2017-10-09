@@ -7,6 +7,8 @@
 #include "include/v8.h"
 #include "src/isolate.h"
 #include "src/objects-inl.h"
+#include "src/wasm/module-compiler.h"
+#include "src/wasm/wasm-api.h"
 #include "src/wasm/wasm-module-builder.h"
 #include "src/wasm/wasm-module.h"
 #include "src/zone/accounting-allocator.h"
@@ -14,21 +16,20 @@
 #include "test/common/wasm/wasm-module-runner.h"
 #include "test/fuzzer/fuzzer-support.h"
 
-#define WASM_CODE_FUZZER_HASH_SEED 83
+namespace v8 {
+namespace internal {
+namespace wasm {
+namespace fuzzer {
 
-using namespace v8::internal;
-using namespace v8::internal::wasm;
-using namespace v8::internal::wasm::fuzzer;
+static constexpr uint32_t kWasmCodeFuzzerHashSeed = 83;
 
-static const char* kNameString = "name";
-static const size_t kNameStringLength = 4;
+static constexpr const char* kNameString = "name";
+static constexpr size_t kNameStringLength = 4;
 
-int v8::internal::wasm::fuzzer::FuzzWasmSection(SectionCode section,
-                                                const uint8_t* data,
-                                                size_t size) {
+int FuzzWasmSection(SectionCode section, const uint8_t* data, size_t size) {
   v8_fuzzer::FuzzerSupport* support = v8_fuzzer::FuzzerSupport::Get();
   v8::Isolate* isolate = support->GetIsolate();
-  v8::internal::Isolate* i_isolate = reinterpret_cast<Isolate*>(isolate);
+  i::Isolate* i_isolate = reinterpret_cast<Isolate*>(isolate);
 
   // Clear any pending exceptions from a prior run.
   if (i_isolate->has_pending_exception()) {
@@ -67,8 +68,31 @@ int v8::internal::wasm::fuzzer::FuzzWasmSection(SectionCode section,
   return 0;
 }
 
-int WasmExecutionFuzzer::FuzzWasmModule(
+void InterpretAndExecuteModule(i::Isolate* isolate,
+                               Handle<WasmModuleObject> module_object) {
+  ScheduledErrorThrower thrower(isolate, "WebAssembly Instantiation");
+  // Try to instantiate and interpret the module_object.
+  MaybeHandle<WasmInstanceObject> maybe_instance =
+      SyncInstantiate(isolate, &thrower, module_object,
+                      Handle<JSReceiver>::null(),     // imports
+                      MaybeHandle<JSArrayBuffer>());  // memory
+  Handle<WasmInstanceObject> instance;
+  if (!maybe_instance.ToHandle(&instance)) return;
+  if (!testing::InterpretWasmModuleForTesting(isolate, instance, "main", 0,
+                                              nullptr)) {
+    return;
+  }
 
+  // Instantiate and execute the module_object.
+  maybe_instance = SyncInstantiate(isolate, &thrower, module_object,
+                                   Handle<JSReceiver>::null(),     // imports
+                                   MaybeHandle<JSArrayBuffer>());  // memory
+  if (!maybe_instance.ToHandle(&instance)) return;
+
+  testing::RunWasmModuleForTesting(isolate, instance, 0, nullptr);
+}
+
+int WasmExecutionFuzzer::FuzzWasmModule(
     const uint8_t* data, size_t size) {
   // Save the flag so that we can change it and restore it later.
   bool generate_test = FLAG_wasm_code_fuzzer_gen_test;
@@ -93,7 +117,7 @@ int WasmExecutionFuzzer::FuzzWasmModule(
   }
   v8_fuzzer::FuzzerSupport* support = v8_fuzzer::FuzzerSupport::Get();
   v8::Isolate* isolate = support->GetIsolate();
-  Isolate* i_isolate = reinterpret_cast<Isolate*>(isolate);
+  i::Isolate* i_isolate = reinterpret_cast<Isolate*>(isolate);
 
   // Clear any pending exceptions from a prior run.
   if (i_isolate->has_pending_exception()) {
@@ -111,66 +135,83 @@ int WasmExecutionFuzzer::FuzzWasmModule(
 
   ZoneBuffer buffer(&zone);
   int32_t num_args = 0;
-  std::unique_ptr<WasmVal[]> interpreter_args;
+  std::unique_ptr<WasmValue[]> interpreter_args;
   std::unique_ptr<Handle<Object>[]> compiler_args;
   if (!GenerateModule(i_isolate, &zone, data, size, buffer, num_args,
                       interpreter_args, compiler_args)) {
     return 0;
   }
 
-  v8::internal::wasm::testing::SetupIsolateForWasmModule(i_isolate);
+  testing::SetupIsolateForWasmModule(i_isolate);
 
   ErrorThrower interpreter_thrower(i_isolate, "Interpreter");
-  std::unique_ptr<const WasmModule> module(testing::DecodeWasmModuleForTesting(
-      i_isolate, &interpreter_thrower, buffer.begin(), buffer.end(),
-      ModuleOrigin::kWasmOrigin, true));
+  ModuleWireBytes wire_bytes(buffer.begin(), buffer.end());
 
+  MaybeHandle<WasmModuleObject> compiled_module =
+      SyncCompile(i_isolate, &interpreter_thrower, wire_bytes);
   // Clear the flag so that the WebAssembly code is not printed twice.
   FLAG_wasm_code_fuzzer_gen_test = false;
-  if (module == nullptr) {
-    if (generate_test) {
-      OFStream os(stdout);
-      os << "            ])" << std::endl;
-      os << "            .exportFunc();" << std::endl;
-      os << "  assertThrows(function() { builder.instantiate(); });"
-         << std::endl;
-      os << "})();" << std::endl;
-    }
-    return 0;
-  }
+  bool compiles = !compiled_module.is_null();
+
   if (generate_test) {
     OFStream os(stdout);
-    os << "            ])" << std::endl;
-    os << "            .exportFunc();" << std::endl;
-    os << "  var module = builder.instantiate();" << std::endl;
-    os << "  module.exports.test(1, 2, 3);" << std::endl;
+    os << "            ])" << std::endl
+       << "            .exportFunc();" << std::endl;
+    if (compiles) {
+      os << "  var module = builder.instantiate();" << std::endl
+         << "  module.exports.test(1, 2, 3);" << std::endl;
+    } else {
+      OFStream os(stdout);
+      os << "  assertThrows(function() { builder.instantiate(); });"
+         << std::endl;
+    }
     os << "})();" << std::endl;
   }
 
-  ModuleWireBytes wire_bytes(buffer.begin(), buffer.end());
+  bool validates = SyncValidate(i_isolate, wire_bytes);
+
+  if (compiles != validates) {
+    uint32_t hash = StringHasher::HashSequentialString(
+        data, static_cast<int>(size), kWasmCodeFuzzerHashSeed);
+    V8_Fatal(__FILE__, __LINE__,
+             "compiles != validates (%d vs %d); WasmCodeFuzzerHash=%x",
+             compiles, validates, hash);
+  }
+
+  if (!compiles) return 0;
+
   int32_t result_interpreted;
   bool possible_nondeterminism = false;
   {
+    MaybeHandle<WasmInstanceObject> interpreter_instance = SyncInstantiate(
+        i_isolate, &interpreter_thrower, compiled_module.ToHandleChecked(),
+        MaybeHandle<JSReceiver>(), MaybeHandle<JSArrayBuffer>());
+
+    if (interpreter_thrower.error()) {
+      return 0;
+    }
     result_interpreted = testing::InterpretWasmModule(
-        i_isolate, &interpreter_thrower, module.get(), wire_bytes, 0,
-        interpreter_args.get(), &possible_nondeterminism);
+        i_isolate, interpreter_instance.ToHandleChecked(), &interpreter_thrower,
+        0, interpreter_args.get(), &possible_nondeterminism);
   }
 
-  ErrorThrower compiler_thrower(i_isolate, "Compiler");
-  Handle<JSObject> instance = testing::InstantiateModuleForTesting(
-      i_isolate, &compiler_thrower, module.get(), wire_bytes);
-  // Restore the flag.
-  FLAG_wasm_code_fuzzer_gen_test = generate_test;
-  if (!interpreter_thrower.error()) {
-    CHECK(!instance.is_null());
-  } else {
+  // Do not execute the generated code if the interpreter did not finished after
+  // a bounded number of steps.
+  if (interpreter_thrower.error()) {
     return 0;
   }
+
   int32_t result_compiled;
   {
+    ErrorThrower compiler_thrower(i_isolate, "Compiler");
+    MaybeHandle<WasmInstanceObject> compiled_instance = SyncInstantiate(
+        i_isolate, &compiler_thrower, compiled_module.ToHandleChecked(),
+        MaybeHandle<JSReceiver>(), MaybeHandle<JSArrayBuffer>());
+
+    DCHECK(!compiler_thrower.error());
     result_compiled = testing::CallWasmFunctionForTesting(
-        i_isolate, instance, &compiler_thrower, "main", num_args,
-        compiler_args.get(), ModuleOrigin::kWasmOrigin);
+        i_isolate, compiled_instance.ToHandleChecked(), &compiler_thrower,
+        "main", num_args, compiler_args.get());
   }
 
   // The WebAssembly spec allows the sign bit of NaN to be non-deterministic.
@@ -187,8 +228,13 @@ int WasmExecutionFuzzer::FuzzWasmModule(
     if (result_interpreted != result_compiled) {
       V8_Fatal(__FILE__, __LINE__, "WasmCodeFuzzerHash=%x",
                StringHasher::HashSequentialString(data, static_cast<int>(size),
-                                                  WASM_CODE_FUZZER_HASH_SEED));
+                                                  kWasmCodeFuzzerHashSeed));
     }
   }
   return 0;
 }
+
+}  // namespace fuzzer
+}  // namespace wasm
+}  // namespace internal
+}  // namespace v8

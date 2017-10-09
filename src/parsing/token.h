@@ -53,9 +53,8 @@ namespace internal {
   T(ARROW, "=>", 0)                                                  \
                                                                      \
   /* Assignment operators. */                                        \
-  /* IsAssignmentOp() and Assignment::is_compound() relies on */     \
-  /* this block of enum values being contiguous and sorted in the */ \
-  /* same order! */                                                  \
+  /* IsAssignmentOp() relies on this block of enum values being */   \
+  /* contiguous and sorted in the same order! */                     \
   T(INIT, "=init", 2) /* AST-use only. */                            \
   T(ASSIGN, "=", 2)                                                  \
   T(ASSIGN_BIT_OR, "|=", 2)                                          \
@@ -83,7 +82,6 @@ namespace internal {
   T(SHL, "<<", 11)                                                   \
   T(SAR, ">>", 11)                                                   \
   T(SHR, ">>>", 11)                                                  \
-  T(ROR, "rotate right", 11) /* only used by Crankshaft */           \
   T(ADD, "+", 12)                                                    \
   T(SUB, "-", 12)                                                    \
   T(MUL, "*", 13)                                                    \
@@ -189,6 +187,7 @@ namespace internal {
   C(OF, "of", 0)                                                     \
   C(TARGET, "target", 0)                                             \
   C(SENT, "sent", 0)                                                 \
+  C(META, "meta", 0)                                                 \
   C(AS, "as", 0)                                                     \
   C(FROM, "from", 0)                                                 \
   C(NAME, "name", 0)                                                 \
@@ -248,7 +247,7 @@ class Token {
   static bool IsBinaryOp(Value op) { return COMMA <= op && op <= EXP; }
 
   static bool IsTruncatingBinaryOp(Value op) {
-    return BIT_OR <= op && op <= ROR;
+    return BIT_OR <= op && op <= SHR;
   }
 
   static bool IsCompareOp(Value op) {
@@ -314,6 +313,36 @@ class Token {
       case Token::GT: return (op1 > op2);
       case Token::LTE: return (op1 <= op2);
       case Token::GTE: return (op1 >= op2);
+      default:
+        UNREACHABLE();
+    }
+  }
+
+  static Value BinaryOpForAssignment(Value op) {
+    DCHECK(IsAssignmentOp(op));
+    switch (op) {
+      case Token::ASSIGN_BIT_OR:
+        return Token::BIT_OR;
+      case Token::ASSIGN_BIT_XOR:
+        return Token::BIT_XOR;
+      case Token::ASSIGN_BIT_AND:
+        return Token::BIT_AND;
+      case Token::ASSIGN_SHL:
+        return Token::SHL;
+      case Token::ASSIGN_SAR:
+        return Token::SAR;
+      case Token::ASSIGN_SHR:
+        return Token::SHR;
+      case Token::ASSIGN_ADD:
+        return Token::ADD;
+      case Token::ASSIGN_SUB:
+        return Token::SUB;
+      case Token::ASSIGN_MUL:
+        return Token::MUL;
+      case Token::ASSIGN_DIV:
+        return Token::DIV;
+      case Token::ASSIGN_MOD:
+        return Token::MOD;
       default:
         UNREACHABLE();
     }

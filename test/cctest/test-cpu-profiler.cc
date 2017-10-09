@@ -33,6 +33,7 @@
 #include "src/api.h"
 #include "src/base/platform/platform.h"
 #include "src/deoptimizer.h"
+#include "src/libplatform/default-platform.h"
 #include "src/objects-inl.h"
 #include "src/profiler/cpu-profiler-inl.h"
 #include "src/profiler/profiler-listener.h"
@@ -43,17 +44,9 @@
 #include "include/libplatform/v8-tracing.h"
 #include "src/tracing/trace-event.h"
 
-using i::CodeEntry;
-using i::CpuProfile;
-using i::CpuProfiler;
-using i::CpuProfilesCollection;
-using i::Heap;
-using i::ProfileGenerator;
-using i::ProfileNode;
-using i::ProfilerEventsProcessor;
-using i::ProfilerListener;
-using i::ScopedVector;
-using i::Vector;
+namespace v8 {
+namespace internal {
+namespace test_cpu_profiler {
 
 // Helper methods
 static v8::Local<v8::Function> GetFunction(v8::Local<v8::Context> env,
@@ -264,21 +257,21 @@ TEST(TickEvents) {
   CHECK(profile);
 
   // Check call trees.
-  const i::List<ProfileNode*>* top_down_root_children =
+  const std::vector<ProfileNode*>* top_down_root_children =
       profile->top_down()->root()->children();
-  CHECK_EQ(1, top_down_root_children->length());
-  CHECK_EQ(0, strcmp("bbb", top_down_root_children->last()->entry()->name()));
-  const i::List<ProfileNode*>* top_down_bbb_children =
-      top_down_root_children->last()->children();
-  CHECK_EQ(1, top_down_bbb_children->length());
-  CHECK_EQ(0, strcmp("5", top_down_bbb_children->last()->entry()->name()));
-  const i::List<ProfileNode*>* top_down_stub_children =
-      top_down_bbb_children->last()->children();
-  CHECK_EQ(1, top_down_stub_children->length());
-  CHECK_EQ(0, strcmp("ddd", top_down_stub_children->last()->entry()->name()));
-  const i::List<ProfileNode*>* top_down_ddd_children =
-      top_down_stub_children->last()->children();
-  CHECK_EQ(0, top_down_ddd_children->length());
+  CHECK_EQ(1, top_down_root_children->size());
+  CHECK_EQ(0, strcmp("bbb", top_down_root_children->back()->entry()->name()));
+  const std::vector<ProfileNode*>* top_down_bbb_children =
+      top_down_root_children->back()->children();
+  CHECK_EQ(1, top_down_bbb_children->size());
+  CHECK_EQ(0, strcmp("5", top_down_bbb_children->back()->entry()->name()));
+  const std::vector<ProfileNode*>* top_down_stub_children =
+      top_down_bbb_children->back()->children();
+  CHECK_EQ(1, top_down_stub_children->size());
+  CHECK_EQ(0, strcmp("ddd", top_down_stub_children->back()->entry()->name()));
+  const std::vector<ProfileNode*>* top_down_ddd_children =
+      top_down_stub_children->back()->children();
+  CHECK(top_down_ddd_children->empty());
 
   isolate->code_event_dispatcher()->RemoveListener(&profiler_listener);
 }
@@ -336,8 +329,8 @@ TEST(Issue1398) {
 
   unsigned actual_depth = 0;
   const ProfileNode* node = profile->top_down()->root();
-  while (node->children()->length() > 0) {
-    node = node->children()->last();
+  while (!node->children()->empty()) {
+    node = node->children()->back();
     ++actual_depth;
   }
 
@@ -785,11 +778,12 @@ class TestApiCallbacks {
  private:
   void Wait() {
     if (is_warming_up_) return;
-    double start = v8::base::OS::TimeCurrentMillis();
+    v8::Platform* platform = v8::internal::V8::GetCurrentPlatform();
+    double start = platform->CurrentClockTimeMillis();
     double duration = 0;
     while (duration < min_duration_ms_) {
       v8::base::OS::Sleep(v8::base::TimeDelta::FromMilliseconds(1));
-      duration = v8::base::OS::TimeCurrentMillis() - start;
+      duration = platform->CurrentClockTimeMillis() - start;
     }
   }
 
@@ -1902,7 +1896,6 @@ TEST(CollectDeoptEvents) {
 
 TEST(SourceLocation) {
   i::FLAG_always_opt = true;
-  i::FLAG_hydrogen_track_positions = true;
   LocalContext env;
   v8::HandleScope scope(CcTest::isolate());
 
@@ -2152,7 +2145,8 @@ TEST(TracingCpuProfiler) {
   i::V8::SetPlatformForTesting(default_platform);
 
   v8::platform::tracing::TracingController tracing_controller;
-  v8::platform::SetTracingController(default_platform, &tracing_controller);
+  static_cast<v8::platform::DefaultPlatform*>(default_platform)
+      ->SetTracingController(&tracing_controller);
 
   CpuProfileEventChecker* event_checker = new CpuProfileEventChecker();
   TraceBuffer* ring_buffer =
@@ -2184,9 +2178,13 @@ TEST(TracingCpuProfiler) {
   std::string code = profile_checker + profile_json + ")";
   v8::Local<v8::Value> result =
       CompileRunChecked(CcTest::isolate(), code.c_str());
-  v8::String::Utf8Value value(result);
+  v8::String::Utf8Value value(CcTest::isolate(), result);
   printf("Check result: %*s\n", value.length(), *value);
   CHECK_EQ(0, value.length());
 
   i::V8::SetPlatformForTesting(old_platform);
 }
+
+}  // namespace test_cpu_profiler
+}  // namespace internal
+}  // namespace v8

@@ -156,6 +156,7 @@ void BytecodeArrayWriter::UpdateExitSeenInBlock(Bytecode bytecode) {
     case Bytecode::kReturn:
     case Bytecode::kThrow:
     case Bytecode::kReThrow:
+    case Bytecode::kAbort:
     case Bytecode::kJump:
     case Bytecode::kJumpConstant:
       exit_seen_in_block_ = true;
@@ -247,8 +248,6 @@ Bytecode GetJumpWithConstantOperand(Bytecode jump_bytecode) {
       return Bytecode::kJumpIfToBooleanTrueConstant;
     case Bytecode::kJumpIfToBooleanFalse:
       return Bytecode::kJumpIfToBooleanFalseConstant;
-    case Bytecode::kJumpIfNotHole:
-      return Bytecode::kJumpIfNotHoleConstant;
     case Bytecode::kJumpIfNull:
       return Bytecode::kJumpIfNullConstant;
     case Bytecode::kJumpIfNotNull:
