@@ -100,7 +100,7 @@ def FetchAndExtract(arch):
 def main(args):
   if not sys.platform.startswith('linux'):
     return 0
-
+  return
   arch = GetArch()
   if arch == 'x64':
     return FetchAndExtract(arch)

@@ -47,4 +47,5 @@ gclient sync 会重写这几个文件,之后runhooks时,会下载失败,需要�
 > 3. tools/clang/scripts/update.py
 
 export http_proxy=https://agent.baidu.com:8118
+export NO_AUTH_BOTO_CONFIG=~/depot_tools/.boto
 可以让命令行窗口也走代理
