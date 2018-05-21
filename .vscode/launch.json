@@ -2,6 +2,33 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "gdb debug",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceRoot}/out.gn/x64.debug/d8",
+            "args": [
+                "--trace-opt",
+                "--trace-deopt",
+                "--print-bytecode",
+                "--ignition",
+                "--allow-natives-syntax",
+                "demo/test20.js"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceRoot}",
+            "environment": [],
+            "linux": {
+                "MIMode": "gdb",
+                "setupCommands": [
+                    {
+                        "description": "Enable pretty-printing for gdb",
+                        "text": "-enable-pretty-printing",
+                        "ignoreFailures": true
+                    }
+                ]
+            }
+        },
+        {
             "type": "lldb",
             "request": "launch",
             "name": "lldb demo",
@@ -10,13 +37,12 @@
                 "--trace-opt",
                 "--trace-deopt",
                 "--print-bytecode",
-                "--ignition",
                 "--allow-natives-syntax",
                 "--trace_regexp_bytecodes",
                 "--print_break_location",
                 "--trace_regexp_parser",
                 "--trace_regexp_assembler",
-                "demo/test1.js"
+                "demo/test20.js"
             ],
             "cwd": "${workspaceRoot}",
             "sourceMap": { 
@@ -160,7 +186,7 @@
                 "--print-bytecode",
                 "--ignition",
                 "--allow-natives-syntax",
-                "demo/split.js"
+                "demo/test20.js"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceRoot}",
@@ -182,6 +208,64 @@
             "name": "cctest gdb",
             "program": "${workspaceRoot}/out.gn/x64.debug/cctest",
             "args": ["test-array-buffer-tracker/ArrayBuffer_ScavengeAndMC"],
+            "cwd": "${workspaceRoot}",
+            "linux": {
+                "MIMode": "gdb",
+                "setupCommands": [
+                    {
+                        "description": "Enable pretty-printing for gdb",
+                        "text": "-enable-pretty-printing",
+                        "ignoreFailures": true
+                    }
+                ]
+            }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "lldb for cctest test-regexp1",
+            "program": "${workspaceRoot}/out.gn/x64.debug/cctest",
+            "args": [
+                "test-regexp"
+            ],
+            "cwd": "${workspaceRoot}",
+            "initCommands": ["command source /home/zhujianchen/.lldbinit", "command source ${workspaceRoot}/.lldbinit"]
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "lldb for cctest test-regexp",
+            "program": "${workspaceRoot}/out.gn/x64.debug/cctest",
+            "args": [
+                "test-regexp/AddInverseToTable"
+            ],
+            "cwd": "${workspaceRoot}",
+            "initCommands": ["command source /home/zhujianchen/.lldbinit", "command source ${workspaceRoot}/.lldbinit"]
+        },
+        {
+            "type": "cppdbg",
+            "request": "launch",
+            "name": "cctest gdb regexp",
+            "program": "${workspaceRoot}/out.gn/x64.debug/cctest",
+            "args": ["test-regexp"],
+            "cwd": "${workspaceRoot}",
+            "linux": {
+                "MIMode": "gdb",
+                "setupCommands": [
+                    {
+                        "description": "Enable pretty-printing for gdb",
+                        "text": "-enable-pretty-printing",
+                        "ignoreFailures": true
+                    }
+                ]
+            }
+        },
+        {
+            "type": "cppdbg",
+            "request": "launch",
+            "name": "cctest gdb AddInverseToTable",
+            "program": "${workspaceRoot}/out.gn/x64.debug/cctest",
+            "args": ["test-regexp/AddInverseToTable"],
             "cwd": "${workspaceRoot}",
             "linux": {
                 "MIMode": "gdb",
