@@ -34,6 +34,8 @@ tools/run-tests.py --gn test262
 
 out.gn/x64.debug/unittests --random-seed=-1055853278 --gtest_filter=ValueSerializerTestWithWasm.RountripWasmInline --gtest_random_seed=-1055853278 --gtest_print_time=0 --nohard-abort --nodead-code-elimination --nofold-constants --enable-slow-asserts --verify-heap
 
+webkit
+
 gdb --args out.gn/x64.debug/v8_hello_world
 
 lldb -- out.gn/x64.debug/v8_sample_process samples/count-hosts.js
